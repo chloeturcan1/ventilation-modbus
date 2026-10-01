@@ -47,7 +47,7 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from tp_simu_auto import modbus_map as mm
+from ventilation_modbus import modbus_map as mm
 
 
 def _with_hysteresis(on: bool, value: float, threshold: float, hysteresis: float) -> bool:

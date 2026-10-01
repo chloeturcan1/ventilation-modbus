@@ -1,4 +1,4 @@
-"""Client de démonstration (IHM provisoire) pour l'automate de ventilation.
+"""Client de test automatique de l'automate de ventilation, par Modbus TCP.
 
 1. Force les températures pour parcourir les seuils de la logique été, puis
    ceux de la logique hiver, et vérifie la réponse des ventilateurs (OK / ECART).
@@ -20,8 +20,8 @@ from datetime import datetime
 from pymodbus.client import ModbusTcpClient
 
 from server import settings_from_registers, settings_to_registers
-from tp_simu_auto import modbus_map as mm
-from tp_simu_auto.automate import Settings
+from ventilation_modbus import modbus_map as mm
+from ventilation_modbus.automate import Settings
 
 HOST = "127.0.0.1"
 SETTLE_S = 0.5  # > 2 cycles automate (0.2 s) pour laisser la logique réagir

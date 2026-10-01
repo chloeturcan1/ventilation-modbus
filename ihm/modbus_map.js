@@ -1,4 +1,4 @@
-// Table d'échange Modbus, lue depuis src/tp_simu_auto/modbus_map.py.
+// Table d'échange Modbus, lue depuis src/ventilation_modbus/modbus_map.py.
 //
 // Le fichier Python reste la seule source de vérité des adresses : au
 // démarrage, on demande à Python d'exporter ses constantes en JSON plutôt que
@@ -12,7 +12,7 @@ const PROJECT_ROOT = path.resolve(__dirname, "..");
 
 const EXPORT_SCRIPT = `
 import json
-from tp_simu_auto import modbus_map as m
+from ventilation_modbus import modbus_map as m
 print(json.dumps({k: v for k, v in vars(m).items() if k.isupper()}))
 `;
 

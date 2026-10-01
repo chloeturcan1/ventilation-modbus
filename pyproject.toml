@@ -1,5 +1,5 @@
 [project]
-name = "demomodbus"
+name = "ventilation-modbus"
 version = "0.1.0"
 description = "Automate de ventilation simule, expose en Modbus TCP avec pymodbus"
 requires-python = ">=3.13"
@@ -15,4 +15,4 @@ requires = ["uv_build>=0.12.14,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "tp_simu_auto"
+module-name = "ventilation_modbus"

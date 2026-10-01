@@ -270,7 +270,7 @@ test. Si l'envoi est configuré, chaque test envoie donc des mails d'alerte.
 ## Table d'échange Modbus
 
 Automate : unit id **1**, port **502**. Toutes les adresses sont définies à un
-seul endroit, [`modbus_map.py`](src/tp_simu_auto/modbus_map.py), que l'automate,
+seul endroit, [`modbus_map.py`](src/ventilation_modbus/modbus_map.py), que l'automate,
 le client et l'IHM utilisent tous.
 
 | Type | Adresse | Accès | Signification |
@@ -309,23 +309,23 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 ## Structure du projet
 
 ```
-├── src/tp_simu_auto/
-│   ├── modbus_map.py     # table d'échange Modbus (adresses, échelle)
-│   └── automate.py       # logique, modes, sécurités, alarmes et simulation physique
-├── server.py             # l'automate : serveur Modbus TCP + cycle de 0,2 s
-├── client.py             # client de test automatique (seuils, conduite, sécurités)
-├── start.sh              # lance tout en une commande sous macOS / Linux
-├── start.bat, start.ps1  # lance tout en une commande sous Windows
-├── ihm/
-│   ├── server.js         # serveur de l'IHM : passerelle Modbus <-> navigateur, accès, journal
-│   ├── report.js         # génération du rapport d'alarmes en PDF
-│   ├── alerts.js         # alertes par mail : compte d'envoi, destinataires, envoi
-│   ├── data/             # données locales (compte d'envoi, destinataires), non versionnées
-│   ├── modbus_map.js     # relit les adresses dans modbus_map.py
-│   └── public/
-│       ├── index.html    # la page de supervision
-│       ├── alertes.html  # la fenêtre de configuration des alertes par mail
-│       └── common.css    # le style commun aux deux pages
+├── src/ventilation_modbus/   # le paquet Python de l'automate
+│   ├── modbus_map.py         # table d'échange Modbus (adresses, échelle, plages)
+│   └── automate.py           # logique, modes, sécurités, alarmes, réglages, simulation
+├── server.py                 # l'automate : serveur Modbus TCP + cycle de 0,2 s
+├── client.py                 # test automatique (seuils, conduite, sécurités, réglages)
+├── start.sh                  # lance tout en une commande sous macOS / Linux
+├── start.bat, start.ps1      # lance tout en une commande sous Windows
+├── ihm/                      # l'IHM web (Node.js)
+│   ├── server.js             # passerelle Modbus <-> navigateur, accès, journal
+│   ├── modbus_map.js         # relit les adresses dans modbus_map.py
+│   ├── report.js             # rapport d'alarmes en PDF
+│   ├── alerts.js             # alertes par mail : compte d'envoi, destinataires, envoi
+│   ├── public/
+│   │   ├── index.html        # la page de supervision
+│   │   ├── alertes.html      # la fenêtre de configuration des alertes par mail
+│   │   └── common.css        # le style commun aux deux pages
+│   └── data/                 # données locales (compte d'envoi, destinataires), non versionnées
 └── pyproject.toml, uv.lock, ihm/package.json   # dépendances
 ```
 
@@ -553,7 +553,7 @@ voit les ventilateurs réagir en direct.
 #### Projet dans un dossier synchronisé iCloud (macOS)
 
 Si `uv run server.py` affiche `ModuleNotFoundError: No module named
-'tp_simu_auto'` alors que le projet est dans Documents ou Bureau synchronisés
+'ventilation_modbus'` alors que le projet est dans Documents ou Bureau synchronisés
 avec iCloud, c'est qu'iCloud marque comme « cachés » les fichiers `.pth` de
 l'environnement virtuel, que Python 3.13 ignore alors. La solution est de
 placer l'environnement dans un dossier `.nosync`, qu'iCloud ne synchronise pas :

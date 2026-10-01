@@ -19,8 +19,8 @@ import time
 from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
-from tp_simu_auto import modbus_map as mm
-from tp_simu_auto.automate import Alarm, Automate, FanMode, Settings
+from ventilation_modbus import modbus_map as mm
+from ventilation_modbus.automate import Alarm, Automate, FanMode, Settings
 
 CYCLE_S = 0.2
 
