@@ -20,7 +20,7 @@ FC_HOLDING_REGISTERS = 3  # Read Holding Registers (même espace que FC6/FC16)
 FC_INPUT_REGISTERS = 4  # Read Input Registers
 
 # --- Coils (lecture/écriture, commandes de l'IHM) -----------------------------
-COIL_SUMMER_MODE = 0  # True = mode été (logique ventilateurs active), False = hiver (tout coupé)
+COIL_SUMMER_MODE = 0  # True = mode été, False = mode hiver (seuils plus hauts, boucle de chauffage)
 COIL_FORCE_T_INT = 1  # True = la température intérieure est forcée à HR_T_INT_FORCED
 COIL_FORCE_T_EXT = 2  # True = la température extérieure est forcée à HR_T_EXT_FORCED
 COILS_START = COIL_SUMMER_MODE
@@ -34,10 +34,10 @@ HR_FORCED_COUNT = 2
 
 # --- Discrete inputs (lecture seule, état des ventilateurs) -------------------
 # Contigus pour être lus en une seule requête FC2.
-DI_FAN_1 = 0  # Soufflage, seuil 23 °C
-DI_FAN_2 = 1  # Soufflage, seuil 24 °C
-DI_FAN_3 = 2  # Soufflage, seuil 25 °C
-DI_FAN_4 = 3  # Monté à l'envers (extraction) : T_int > T_ext
+DI_FAN_1 = 0  # Soufflage, seuil 23 °C été / 26 °C hiver
+DI_FAN_2 = 1  # Soufflage, seuil 24 °C été / 27 °C hiver
+DI_FAN_3 = 2  # Soufflage, seuil 25 °C été / 28 °C hiver
+DI_FAN_4 = 3  # Monté à l'envers (extraction) : T_int > T_ext (et T_int > 28 °C en hiver)
 DI_FANS_START = DI_FAN_1
 DI_FANS_COUNT = 4
 

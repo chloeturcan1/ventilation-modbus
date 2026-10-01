@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ventilation - Supervision</title>
+<style>
+  :root {
+    --bg: #f3f4f6;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #1d2330;
+    --muted: #6b7280;
+    --on: #16a34a;
+    --on-bg: #dcfce7;
+    --off: #9ca3af;
+    --warn: #b45309;
+    --warn-bg: #fef3c7;
+    --err: #dc2626;
+    --err-bg: #fee2e2;
+    --accent: #2563eb;
+    --summer: #ea580c;
+    --winter: #0284c7;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218;
+      --panel: #181c25;
+      --border: #2a303c;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --on: #4ade80;
+      --on-bg: #14341f;
+      --off: #4b5563;
+      --warn: #fbbf24;
+      --warn-bg: #3a2c0b;
+      --err: #f87171;
+      --err-bg: #3b1515;
+      --accent: #60a5fa;
+      --summer: #fb923c;
+      --winter: #38bdf8;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 20px 16px 40px; }
+
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+    margin-bottom: 20px;
+  }
+  h1 { font-size: 22px; margin: 0; flex: 1 1 auto; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .pill.ok { color: var(--on); background: var(--on-bg); }
+  .pill.ko { color: var(--err); background: var(--err-bg); }
+
+  .mode { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel); }
+  .mode button {
+    border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 600;
+    padding: 8px 18px; cursor: pointer;
+  }
+  .mode button[aria-pressed="true"].summer { background: var(--summer); color: #fff; }
+  .mode button[aria-pressed="true"].winter { background: var(--winter); color: #fff; }
+
+  .grid { display: grid; gap: 16px; }
+  .temps { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); margin-bottom: 16px; }
+  .fans { grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); margin-bottom: 16px; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+  .card.dim { opacity: .55; }
+
+  .temp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .temp-value { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .temp-value small { font-size: 20px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+  .badge { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; color: var(--warn); background: var(--warn-bg); }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  .scale { position: relative; height: 34px; margin-top: 10px; }
+  .scale .bar { position: absolute; left: 0; right: 0; top: 8px; height: 6px; border-radius: 3px; background: var(--border); }
+  .scale .cursor { position: absolute; top: 2px; width: 3px; height: 18px; border-radius: 2px; background: var(--accent); transform: translateX(-1px); transition: left .4s; }
+  .scale .tick { position: absolute; top: 4px; width: 1px; height: 14px; background: var(--muted); }
+  .scale .tick span { position: absolute; top: 15px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+  .fan { display: flex; align-items: center; gap: 14px; }
+  .fan svg { width: 58px; height: 58px; flex: none; color: var(--off); }
+  .fan.on svg { color: var(--on); }
+  .fan.on svg .blades { animation: spin .8s linear infinite; transform-origin: 32px 32px; }
+  .fan.on.reverse svg .blades { animation-direction: reverse; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .fan.on svg .blades { animation: none; } }
+  .fan-name { font-weight: 700; font-size: 17px; }
+  .fan-state { font-size: 12px; font-weight: 700; letter-spacing: .05em; color: var(--off); }
+  .fan.on .fan-state { color: var(--on); }
+
+  .force-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .force-row:first-of-type { border-top: 0; }
+  .force-row label { flex: 1 1 160px; font-weight: 600; }
+  .force-row input {
+    width: 110px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .btn {
+    padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+
+  #error { color: var(--err); font-weight: 600; }
+  #error:not(:empty) { margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Ventilation &mdash; supervision</h1>
+    <span id="status" class="pill ko">Connexion...</span>
+    <div class="mode" role="group" aria-label="Mode de fonctionnement">
+      <button class="summer" data-summer="true" aria-pressed="false">Été</button>
+      <button class="winter" data-summer="false" aria-pressed="false">Hiver</button>
+    </div>
+  </header>
+
+  <section class="grid temps">
+    <div class="card" id="card-int">
+      <div class="temp-head">
+        <h2>Intérieur &middot; T_int</h2>
+        <span class="badge" id="badge-int" hidden>FORCÉE</span>
+      </div>
+      <div class="temp-value"><span id="t-int">--</span><small>°C</small></div>
+      <div class="scale" id="scale-int" aria-hidden="true"><div class="bar"></div></div>
+    </div>
+    <div class="card" id="card-ext">
+      <div class="temp-head">
+        <h2>Extérieur &middot; T_ext</h2>
+        <span class="badge" id="badge-ext" hidden>FORCÉE</span>
+      </div>
+      <div class="temp-value"><span id="t-ext">--</span><small>°C</small></div>
+      <div class="sub" id="delta">&nbsp;</div>
+    </div>
+  </section>
+
+  <h2>Ventilateurs</h2>
+  <section class="grid fans" id="fans"></section>
+
+  <section class="card">
+    <h2>Forçage des températures (tests)</h2>
+    <div class="force-row">
+      <label for="in-int">Intérieur T_int (°C)</label>
+      <input id="in-int" type="number" step="0.1" min="-50" max="100" value="24.0">
+      <button class="btn primary" data-force="t_int">Forcer</button>
+      <button class="btn" data-release="t_int">Relâcher</button>
+    </div>
+    <div class="force-row">
+      <label for="in-ext">Extérieur T_ext (°C)</label>
+      <input id="in-ext" type="number" step="0.1" min="-50" max="100" value="20.0">
+      <button class="btn primary" data-force="t_ext">Forcer</button>
+      <button class="btn" data-release="t_ext">Relâcher</button>
+    </div>
+    <div id="error" role="alert"></div>
+  </section>
+</div>
+
+<template id="fan-tpl">
+  <div class="card fan">
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="3"/>
+      <g class="blades" fill="currentColor">
+        <path d="M32 32 C 26 22, 28 10, 36 9 C 41 9, 40 20, 32 32 Z"/>
+        <path d="M32 32 C 26 22, 28 10, 36 9 C 41 9, 40 20, 32 32 Z" transform="rotate(120 32 32)"/>
+        <path d="M32 32 C 26 22, 28 10, 36 9 C 41 9, 40 20, 32 32 Z" transform="rotate(240 32 32)"/>
+      </g>
+      <circle cx="32" cy="32" r="4" fill="currentColor"/>
+    </svg>
+    <div>
+      <div class="fan-name"></div>
+      <div class="sub fan-desc"></div>
+      <div class="fan-state">ARRÊT</div>
+    </div>
+  </div>
+</template>
+
+<script>
+  // Seuils affichés : ils doivent correspondre à la logique de automate.py.
+  const SEASONS = {
+    summer: { thresholds: [23, 24, 25], v4: "Extraction · si T_int > T_ext" },
+    winter: { thresholds: [26, 27, 28], v4: "Extraction · si T_int > T_ext et > 28 °C" },
+  };
+  const SCALE_MIN = 18, SCALE_MAX = 32;
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (v) => v.toFixed(1).replace("-0.0", "0.0");
+
+  // --- Construction des éléments fixes ---
+  const fanEls = ["V1", "V2", "V3", "V4"].map((name, i) => {
+    const el = $("fan-tpl").content.firstElementChild.cloneNode(true);
+    el.querySelector(".fan-name").textContent = name;
+    if (i === 3) el.classList.add("reverse"); // V4 est monté à l'envers
+    $("fans").appendChild(el);
+    return el;
+  });
+
+  const pct = (t) => ((Math.min(SCALE_MAX, Math.max(SCALE_MIN, t)) - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100;
+  const cursor = document.createElement("div");
+  cursor.className = "cursor";
+  $("scale-int").appendChild(cursor);
+
+  // Met à jour seuils, descriptions et graduations quand le mode change.
+  let shownSeason = null;
+  function showSeason(season) {
+    if (season === shownSeason) return;
+    shownSeason = season;
+    const { thresholds, v4 } = SEASONS[season];
+    thresholds.forEach((t, i) => {
+      fanEls[i].querySelector(".fan-desc").textContent = `Soufflage · dès ${t} °C`;
+    });
+    fanEls[3].querySelector(".fan-desc").textContent = v4;
+    $("scale-int").querySelectorAll(".tick").forEach((t) => t.remove());
+    for (const t of thresholds) {
+      const tick = document.createElement("div");
+      tick.className = "tick";
+      tick.style.left = pct(t) + "%";
+      tick.innerHTML = `<span>${t}°</span>`;
+      $("scale-int").insertBefore(tick, cursor);
+    }
+  }
+  showSeason("summer");
+
+  // --- Affichage de l'état reçu de l'automate ---
+  let inputsInitialised = false;
+
+  function render(s) {
+    const status = $("status");
+    status.className = "pill " + (s.connected ? "ok" : "ko");
+    status.textContent = s.connected ? "Automate connecté" : s.ihmDown ? "Serveur IHM injoignable" : "Automate injoignable";
+    document.querySelectorAll(".card").forEach((c) => c.classList.toggle("dim", !s.connected));
+    if (!s.connected) return;
+
+    $("t-int").textContent = fmt(s.t_int);
+    $("t-ext").textContent = fmt(s.t_ext);
+    $("badge-int").hidden = !s.force_int;
+    $("badge-ext").hidden = !s.force_ext;
+    showSeason(s.summer ? "summer" : "winter");
+    cursor.style.left = pct(s.t_int) + "%";
+
+    const d = s.t_int - s.t_ext;
+    $("delta").textContent = `T_int − T_ext = ${d >= 0 ? "+" : ""}${fmt(d)} °C`;
+
+    s.fans.forEach((on, i) => {
+      fanEls[i].classList.toggle("on", on);
+      fanEls[i].querySelector(".fan-state").textContent = on ? "MARCHE" : "ARRÊT";
+    });
+
+    document.querySelectorAll(".mode button").forEach((b) => {
+      b.setAttribute("aria-pressed", String((b.dataset.summer === "true") === s.summer));
+    });
+
+    // Pré-remplit les champs une seule fois, pour ne pas écraser une saisie en cours.
+    if (!inputsInitialised) {
+      $("in-int").value = fmt(s.force_int ? s.forced_int : s.t_int);
+      $("in-ext").value = fmt(s.force_ext ? s.forced_ext : s.t_ext);
+      inputsInitialised = true;
+    }
+  }
+
+  // --- Envoi des commandes ---
+  async function post(url, body) {
+    $("error").textContent = "";
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+    } catch (err) {
+      $("error").textContent = "Commande refusée : " + err.message;
+    }
+  }
+
+  document.querySelectorAll(".mode button").forEach((b) =>
+    b.addEventListener("click", () => post("/api/mode", { summer: b.dataset.summer === "true" }))
+  );
+  document.querySelectorAll("[data-force]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const key = b.dataset.force;
+      const value = parseFloat($(key === "t_int" ? "in-int" : "in-ext").value);
+      if (!Number.isFinite(value)) {
+        $("error").textContent = "Saisis une température valide.";
+        return;
+      }
+      post("/api/force", { [key]: value });
+    })
+  );
+  document.querySelectorAll("[data-release]").forEach((b) =>
+    b.addEventListener("click", () => post("/api/force", { [b.dataset.release]: null }))
+  );
+
+  // --- Flux temps réel (reconnexion automatique gérée par EventSource) ---
+  const events = new EventSource("/events");
+  events.onmessage = (e) => render(JSON.parse(e.data));
+  events.onerror = () => render({ connected: false, ihmDown: true });
+</script>
+</body>
+</html>

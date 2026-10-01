@@ -1,9 +1,9 @@
 """Client de démonstration (IHM provisoire) pour l'automate de ventilation.
 
-1. Force les températures pour parcourir les seuils de la logique été et
-   vérifie la réponse des ventilateurs (OK / ECART).
-2. Passe en mode hiver puis revient en mode été.
-3. Relâche les forçages et affiche l'évolution libre de la simulation.
+1. Force les températures pour parcourir les seuils de la logique été, puis
+   ceux de la logique hiver, et vérifie la réponse des ventilateurs (OK / ECART).
+2. Revient en mode été, relâche les forçages et affiche l'évolution libre de
+   la simulation.
 """
 
 import sys
@@ -31,7 +31,17 @@ SCENARIO = [
     (24.0, 30.0, True, (1, 1, 0, 0), "T_int = 24 < T_ext = 30 : pas de V4"),
     (24.0, 24.0, True, (1, 1, 0, 0), "T_int = T_ext : pas de V4"),
     (24.0, 20.0, True, (1, 1, 0, 1), "T_int > T_ext -> V4 (extraction)"),
-    (24.0, 20.0, False, (0, 0, 0, 0), "mode hiver : tout arrete"),
+    # --- Mode hiver : seuils 26 / 27 / 28 C, V4 seulement si de plus T_int > 28 C
+    (24.0, 20.0, False, (0, 0, 0, 0), "hiver, 24 C : sous 26 C, tout arrete"),
+    (26.0, 5.0, False, (1, 0, 0, 0), "hiver 26 C -> V1"),
+    (27.0, 5.0, False, (1, 1, 0, 0), "hiver 27 C -> V1 V2"),
+    (28.0, 5.0, False, (1, 1, 1, 0), "hiver 28 C -> V3, pas V4 (il faut > 28 C)"),
+    (28.5, 5.0, False, (1, 1, 1, 1), "hiver 28.5 C > 28 et > T_ext -> V4"),
+    (28.5, 30.0, False, (1, 1, 1, 0), "hiver T_int < T_ext : arret V4"),
+    (28.5, 5.0, False, (1, 1, 1, 1), "hiver T_int > T_ext : V4 relance"),
+    (27.6, 5.0, False, (1, 1, 1, 1), "hiver 27.6 C : V3 et V4 maintenus (hysteresis)"),
+    (27.4, 5.0, False, (1, 1, 0, 0), "hiver 27.4 C < 27.5 : arret V3 et V4"),
+    (25.4, 5.0, False, (0, 0, 0, 0), "hiver 25.4 C < 25.5 : tout arrete"),
     (24.0, 20.0, True, (1, 1, 0, 1), "retour mode ete"),
 ]
 
