@@ -457,6 +457,19 @@ commandes, cliquer sur **Se connecter** avec un des comptes de la partie
 [Accès opérateur / administrateur](#accès-opérateur--administrateur), par
 exemple `admin` / `admin`.
 
+**Klaxon d'alarme** : dès qu'une alarme apparaît, la page émet une sirène à
+deux tons et le bandeau d'alarme clignote. Le bouton **Silence** du bandeau
+coupe le klaxon sans acquitter l'alarme. Il est accessible à tous et n'agit que
+sur la page, pas sur l'automate. **Acquitter** coupe aussi le klaxon. Le bouton
+**Son** en haut de la page coupe ou réactive le klaxon pour de bon, et ce choix
+est mémorisé par le navigateur. Les navigateurs n'autorisent le son qu'après un
+premier clic sur la page : cliquez n'importe où après l'ouverture pour qu'il
+soit actif.
+
+**Plein écran** : le bouton du même nom affiche l'IHM sur tout l'écran, comme
+sur un poste de supervision. **Échap** ou **Quitter le plein écran** pour en
+sortir.
+
 ### Le test automatique
 
 Le client parcourt tous les seuils été et hiver en forçant les températures,

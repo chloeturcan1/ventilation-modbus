@@ -138,6 +138,19 @@
   .banner.active { background: var(--err-bg); color: var(--err); border: 1px solid var(--err); }
   .banner.latched { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); }
   .banner span { flex: 1 1 240px; }
+  .banner button[hidden] { display: none; }
+  /* Klaxon : le bandeau clignote tant que l'alarme n'a pas été mise sous silence. */
+  .banner.horn { animation: blink 1s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) {
+    .banner.horn { animation: none; outline: 3px solid currentColor; }
+  }
+
+  /* --- Son et plein écran --- */
+  .tools { display: inline-flex; gap: 8px; }
+  .tools .btn { font-size: 13px; padding: 6px 10px; }
+  .tools .btn[hidden] { display: none; }
+  body.fullscreen .wrap { max-width: 1500px; }
 
   /* --- Ventilateurs : mode et défauts --- */
   .fan { flex-direction: column; align-items: stretch; }
@@ -234,6 +247,10 @@
       <button class="winter" data-summer="false" aria-pressed="false" data-need="operator">Hiver</button>
     </div>
     <button class="estop" id="estop" aria-pressed="false">ARRÊT D'URGENCE</button>
+    <div class="tools">
+      <button class="btn" id="sound-btn" aria-pressed="true">Son : activé</button>
+      <button class="btn" id="fullscreen-btn">Plein écran</button>
+    </div>
     <div class="user">
       <span class="who" id="who">Consultation seule</span>
       <button class="btn" id="login-btn">Se connecter</button>
@@ -243,6 +260,7 @@
 
   <div class="banner" id="banner" role="status" hidden>
     <span id="banner-text"></span>
+    <button class="btn" id="silence-btn" hidden>Silence</button>
     <button class="btn" data-ack data-need="operator">Acquitter</button>
   </div>
 
@@ -388,6 +406,8 @@
 
   const $ = (id) => document.getElementById(id);
   const fmt = (v) => v.toFixed(1).replace("-0.0", "0.0");
+  // Seuil compact : « 23 » plutôt que « 23.0 », mais « 22.5 » garde sa décimale.
+  const fmtShort = (v) => String(Math.round(v * 10) / 10);
 
   // --- Construction des éléments fixes ---
   const fanEls = ["V1", "V2", "V3", "V4"].map((name, i) => {
@@ -428,8 +448,102 @@
   };
   const timeFmt = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
+  // --- Klaxon d'alarme ---
+  // Sonne dès qu'une alarme apparaît, jusqu'à « Silence » ou un acquittement.
+  // Le silence ne concerne que cette page : il n'agit pas sur l'automate.
+  let audioCtx = null;
+  let soundEnabled = true;
+  try { soundEnabled = localStorage.getItem("ihm-sound") !== "off"; } catch {}
+  let hornTimer = null;
+  let previousAlarms = null;
+
+  // Les navigateurs n'autorisent le son qu'après une action de l'utilisateur :
+  // le contexte audio est créé ou réveillé au premier clic sur la page.
+  function ensureAudio() {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!audioCtx) audioCtx = new AudioCtx();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+  document.addEventListener("pointerdown", ensureAudio);
+  document.addEventListener("keydown", ensureAudio);
+
+  // Deux tons, aigu puis grave, comme une sirène d'alarme.
+  function beep() {
+    if (!soundEnabled || !audioCtx || audioCtx.state !== "running") return;
+    const t = audioCtx.currentTime;
+    [[880, 0], [660, 0.3]].forEach(([freq, start]) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "square";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t + start);
+      gain.gain.exponentialRampToValueAtTime(0.06, t + start + 0.02);
+      gain.gain.setValueAtTime(0.06, t + start + 0.26);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + start + 0.3);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t + start);
+      osc.stop(t + start + 0.31);
+    });
+  }
+
+  function startHorn() {
+    if (hornTimer) return;
+    beep();
+    hornTimer = setInterval(beep, 1200);
+    $("banner").classList.add("horn");
+    $("silence-btn").hidden = false;
+  }
+
+  function stopHorn() {
+    clearInterval(hornTimer);
+    hornTimer = null;
+    $("banner").classList.remove("horn");
+    $("silence-btn").hidden = true;
+  }
+
+  // Une alarme « apparaît » quand sa cause devient présente ou qu'elle est
+  // mémorisée. Les alarmes déjà là à l'ouverture de la page ne déclenchent rien.
+  function updateHorn(alarms) {
+    const present = alarms.map((a) => a.active || a.latched);
+    if (previousAlarms && present.some((p, i) => p && !previousAlarms[i])) startHorn();
+    if (!present.some(Boolean)) stopHorn(); // plus aucune alarme
+    previousAlarms = present;
+  }
+
+  function showSound() {
+    $("sound-btn").textContent = soundEnabled ? "Son : activé" : "Son : coupé";
+    $("sound-btn").setAttribute("aria-pressed", String(soundEnabled));
+  }
+  $("sound-btn").addEventListener("click", () => {
+    soundEnabled = !soundEnabled;
+    try { localStorage.setItem("ihm-sound", soundEnabled ? "on" : "off"); } catch {}
+    showSound();
+  });
+  showSound();
+  $("silence-btn").addEventListener("click", stopHorn);
+
+  // --- Plein écran (mode salle de contrôle) ---
+  const root = document.documentElement;
+  const requestFs = root.requestFullscreen || root.webkitRequestFullscreen;
+  const exitFs = document.exitFullscreen || document.webkitExitFullscreen;
+  const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+  $("fullscreen-btn").hidden = !requestFs; // non disponible sur iPhone
+  $("fullscreen-btn").addEventListener("click", () => {
+    if (fullscreenElement()) exitFs.call(document);
+    else requestFs.call(root);
+  });
+  function onFullscreenChange() {
+    const on = Boolean(fullscreenElement());
+    document.body.classList.toggle("fullscreen", on);
+    $("fullscreen-btn").textContent = on ? "Quitter le plein écran" : "Plein écran";
+  }
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+  document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+
   function renderAlarms(s) {
     if (!alarmEls) buildAlarmList(s.alarms);
+    updateHorn(s.alarms);
     s.alarms.forEach((a, i) => {
       const st = a.active ? "active" : a.latched ? "latched" : "normal";
       alarmEls[i].className = st;
@@ -440,7 +554,7 @@
     const latched = s.alarms.filter((a) => a.latched && !a.active);
     const banner = $("banner");
     banner.hidden = !active.length && !latched.length;
-    banner.className = "banner " + (active.length ? "active" : "latched");
+    banner.className = "banner " + (active.length ? "active" : "latched") + (hornTimer ? " horn" : "");
     $("banner-text").textContent = active.length
       ? `${active.length} alarme(s) active(s) : ${active.map((a) => a.label).join(", ")}`
       : `En attente d'acquittement : ${latched.map((a) => a.label).join(", ")}`;
@@ -474,17 +588,17 @@
     shownSeason = key;
     const thresholds = summer ? settings.summer : settings.winter;
     thresholds.forEach((t, i) => {
-      fanEls[i].querySelector(".fan-desc").textContent = `Extraction · dès ${fmt(t)} °C`;
+      fanEls[i].querySelector(".fan-desc").textContent = `Extraction · dès ${fmtShort(t)}\u00a0°C`;
     });
     fanEls[3].querySelector(".fan-desc").textContent = summer
       ? "Insufflation · si T_int > T_ext"
-      : `Insufflation · si T_int > T_ext et > ${fmt(settings.winter_intake)} °C`;
+      : `Insufflation · si T_int > T_ext et > ${fmtShort(settings.winter_intake)}\u00a0°C`;
     $("scale-int").querySelectorAll(".tick").forEach((t) => t.remove());
     for (const t of thresholds) {
       const tick = document.createElement("div");
       tick.className = "tick";
       tick.style.left = pct(t) + "%";
-      tick.innerHTML = `<span>${fmt(t)}°</span>`;
+      tick.innerHTML = `<span>${fmtShort(t)}°</span>`;
       $("scale-int").insertBefore(tick, cursor);
     }
   }
@@ -694,7 +808,13 @@
   $("estop").addEventListener("click", () =>
     post("/api/emergency-stop", { pressed: $("estop").getAttribute("aria-pressed") !== "true" })
   );
-  document.querySelectorAll("[data-ack]").forEach((b) => b.addEventListener("click", () => post("/api/ack", {})));
+  // Acquitter vaut aussi silence, comme sur un vrai pupitre.
+  document.querySelectorAll("[data-ack]").forEach((b) =>
+    b.addEventListener("click", () => {
+      stopHorn();
+      post("/api/ack", {});
+    })
+  );
   document.querySelectorAll("[data-release]").forEach((b) =>
     b.addEventListener("click", () => post("/api/force", { [b.dataset.release]: null }))
   );
