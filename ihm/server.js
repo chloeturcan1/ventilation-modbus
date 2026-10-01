@@ -3,8 +3,8 @@
 // - interroge l'automate toutes les POLL_MS et diffuse l'état aux pages ouvertes
 //   (Server-Sent Events sur /events) ;
 // - reçoit les commandes de la page (mode été/hiver, forçages, modes auto/manu,
-//   arrêt d'urgence, acquittement, pannes simulées) et les écrit dans les
-//   coils / holding registers de l'automate ;
+//   arrêt d'urgence, acquittement, pannes simulées, réglages des seuils) et les
+//   écrit dans les coils / holding registers de l'automate ;
 // - gère l'accès opérateur / administrateur : la supervision est visible sans
 //   connexion, mais chaque commande demande un niveau d'accès minimal ;
 // - tient un journal horodaté des alarmes (apparition, disparition, acquittement)
@@ -23,6 +23,7 @@ const { map: mm, toRegister, fromRegister } = require("./modbus_map");
 const { writeReport } = require("./report");
 
 const PLC_HOST = process.env.PLC_HOST || "127.0.0.1";
+const PLC_PORT = Number(process.env.PLC_PORT || mm.PORT);
 const HTTP_HOST = process.env.IHM_HOST || "127.0.0.1"; // pas de HTTPS : local uniquement
 const HTTP_PORT = Number(process.env.IHM_PORT || 3000);
 const POLL_MS = 500;
@@ -46,6 +47,16 @@ const FAN_MODE_NAMES = Object.fromEntries(Object.entries(FAN_MODES).map(([k, v])
 const FAN_MODE_REGISTERS = [mm.HR_FAN_MODE_1, mm.HR_FAN_MODE_2, mm.HR_FAN_MODE_3, mm.HR_FAN_MODE_4];
 const FAN_FAULT_COILS = [mm.COIL_FAN_FAULT_1, mm.COIL_FAN_FAULT_2, mm.COIL_FAN_FAULT_3, mm.COIL_FAN_FAULT_4];
 
+// Réglages : registre, libellé du journal, et lecture / écriture dans l'objet
+// échangé avec la page { summer: [v1, v2, v3], winter: [...], winter_extract, hysteresis, t_int_high }.
+const SETTINGS = [
+  ...[1, 2, 3].map((n) => ({ address: mm[`HR_SUMMER_THRESHOLD_${n}`], label: `Seuil V${n} été`, get: (s) => s.summer[n - 1] })),
+  ...[1, 2, 3].map((n) => ({ address: mm[`HR_WINTER_THRESHOLD_${n}`], label: `Seuil V${n} hiver`, get: (s) => s.winter[n - 1] })),
+  { address: mm.HR_WINTER_EXTRACT_THRESHOLD, label: "Seuil extraction V4 hiver", get: (s) => s.winter_extract },
+  { address: mm.HR_HYSTERESIS, label: "Hystérésis", get: (s) => s.hysteresis },
+  { address: mm.HR_T_INT_HIGH_ALARM, label: "Seuil alarme haute", get: (s) => s.t_int_high },
+];
+
 const client = new ModbusRTU();
 let state = { connected: false };
 const sseClients = new Set();
@@ -65,10 +76,10 @@ function modbus(fn) {
 // --- Connexion / interrogation de l'automate --------------------------------------
 async function connect() {
   try {
-    await client.connectTCP(PLC_HOST, { port: mm.PORT });
+    await client.connectTCP(PLC_HOST, { port: PLC_PORT });
     client.setID(mm.DEVICE_ID);
     client.setTimeout(1000);
-    console.log(`Connecte a l'automate ${PLC_HOST}:${mm.PORT}`);
+    console.log(`Connecte a l'automate ${PLC_HOST}:${PLC_PORT}`);
     poll();
   } catch (err) {
     setDisconnected(err);
@@ -91,6 +102,8 @@ async function readPlc() {
   const hr = await client.readHoldingRegisters(mm.HR_FORCED_START, mm.HR_FORCED_COUNT);
   const modes = await client.readHoldingRegisters(mm.HR_FAN_MODES_START, mm.HR_FAN_MODES_COUNT);
   const al = await client.readInputRegisters(mm.IR_ALARMS_START, mm.IR_ALARMS_COUNT);
+  const set = await client.readHoldingRegisters(mm.HR_SETTINGS_START, mm.HR_SETTINGS_COUNT);
+  const setting = (address) => fromRegister(set.data[address - mm.HR_SETTINGS_START]);
   const fanAddresses = [mm.DI_FAN_1, mm.DI_FAN_2, mm.DI_FAN_3, mm.DI_FAN_4];
   const active = al.data[mm.IR_ALARMS_ACTIVE - mm.IR_ALARMS_START];
   const latched = al.data[mm.IR_ALARMS_LATCHED - mm.IR_ALARMS_START];
@@ -110,6 +123,13 @@ async function readPlc() {
     // Verrouillages de sécurité, déduits des alarmes mémorisées.
     emergency_lock: Boolean(latched & (1 << mm.ALARM_EMERGENCY_STOP)),
     fan_defects: [mm.ALARM_FAN_1, mm.ALARM_FAN_2, mm.ALARM_FAN_3, mm.ALARM_FAN_4].map((bit) => Boolean(latched & (1 << bit))),
+    settings: {
+      summer: [mm.HR_SUMMER_THRESHOLD_1, mm.HR_SUMMER_THRESHOLD_2, mm.HR_SUMMER_THRESHOLD_3].map(setting),
+      winter: [mm.HR_WINTER_THRESHOLD_1, mm.HR_WINTER_THRESHOLD_2, mm.HR_WINTER_THRESHOLD_3].map(setting),
+      winter_extract: setting(mm.HR_WINTER_EXTRACT_THRESHOLD),
+      hysteresis: setting(mm.HR_HYSTERESIS),
+      t_int_high: setting(mm.HR_T_INT_HIGH_ALARM),
+    },
     alarms: mm.ALARM_LABELS.map((label, bit) => ({
       label,
       active: Boolean(active & (1 << bit)),
@@ -186,6 +206,13 @@ async function setCoil(coil, value) {
   await modbus(() => client.writeCoil(coil, value));
 }
 
+// Tous les réglages en une seule écriture (FC16) : l'automate vérifie l'ensemble.
+async function setSettings(settings) {
+  const values = new Array(mm.HR_SETTINGS_COUNT).fill(0);
+  for (const s of SETTINGS) values[s.address - mm.HR_SETTINGS_START] = toRegister(s.get(settings));
+  await modbus(() => client.writeRegisters(mm.HR_SETTINGS_START, values));
+}
+
 function checkFan(fan) {
   if (![1, 2, 3, 4].includes(fan)) throw new Error("'fan' doit valoir 1, 2, 3 ou 4");
   return fan;
@@ -202,6 +229,45 @@ function checkTemperature(value) {
     throw new Error(`temperature invalide (attendu un nombre entre ${T_MIN} et ${T_MAX}, ou null)`);
   }
   return value;
+}
+
+// Mêmes règles que Settings.errors() dans automate.py : on les vérifie ici pour
+// répondre un message clair, l'automate refusant de toute façon un réglage incohérent.
+function checkSettings(body) {
+  const isNumber = (v) => typeof v === "number" && Number.isFinite(v);
+  const inRange = (v, min, max) => isNumber(v) && v >= min && v <= max;
+  const s = {
+    summer: body.summer,
+    winter: body.winter,
+    winter_extract: body.winter_extract,
+    hysteresis: body.hysteresis,
+    t_int_high: body.t_int_high,
+  };
+  for (const season of ["summer", "winter"]) {
+    const name = season === "summer" ? "été" : "hiver";
+    const v = s[season];
+    if (!Array.isArray(v) || v.length !== 3 || !v.every((t) => inRange(t, mm.SETPOINT_MIN, mm.SETPOINT_MAX))) {
+      throw new Error(`seuils ${name} : 3 valeurs entre ${mm.SETPOINT_MIN} et ${mm.SETPOINT_MAX} °C attendues`);
+    }
+    if (!(v[0] <= v[1] && v[1] <= v[2])) throw new Error(`seuils ${name} : il faut V1 ≤ V2 ≤ V3`);
+  }
+  for (const [key, name] of [["winter_extract", "seuil extraction V4 hiver"], ["t_int_high", "seuil alarme haute"]]) {
+    if (!inRange(s[key], mm.SETPOINT_MIN, mm.SETPOINT_MAX)) {
+      throw new Error(`${name} : valeur entre ${mm.SETPOINT_MIN} et ${mm.SETPOINT_MAX} °C attendue`);
+    }
+  }
+  if (!inRange(s.hysteresis, mm.HYSTERESIS_MIN, mm.HYSTERESIS_MAX)) {
+    throw new Error(`hystérésis : valeur entre ${mm.HYSTERESIS_MIN} et ${mm.HYSTERESIS_MAX} °C attendue`);
+  }
+  // Arrondi au dixième, la précision des registres.
+  const round = (v) => Math.round(v * mm.TEMPERATURE_SCALE) / mm.TEMPERATURE_SCALE;
+  return {
+    summer: s.summer.map(round),
+    winter: s.winter.map(round),
+    winter_extract: round(s.winter_extract),
+    hysteresis: round(s.hysteresis),
+    t_int_high: round(s.t_int_high),
+  };
 }
 
 // --- Accès opérateur / administrateur -----------------------------------------
@@ -373,6 +439,18 @@ const server = http.createServer(async (req, res) => {
       const { fan, fault } = await readJson(req);
       await setCoil(FAN_FAULT_COILS[checkFan(fan) - 1], checkBoolean(fault, "fault"));
       logAction(user, `Panne simulée V${fan} ${fault ? "activée" : "retirée"}`);
+      sendJson(res, 200, { ok: true });
+    } else if (req.method === "POST" && req.url === "/api/settings") {
+      const user = requireRole(req, "admin");
+      if (!state.connected) throw new Error("automate injoignable");
+      const settings = checkSettings(await readJson(req));
+      const before = state.settings;
+      await setSettings(settings);
+      for (const s of SETTINGS) {
+        if (s.get(settings) !== s.get(before)) {
+          logAction(user, `${s.label} : de ${s.get(before).toFixed(1)} à ${s.get(settings).toFixed(1)} °C`);
+        }
+      }
       sendJson(res, 200, { ok: true });
     } else if (req.method === "GET" && req.url === "/api/report.pdf") {
       const user = requireRole(req, "operator");

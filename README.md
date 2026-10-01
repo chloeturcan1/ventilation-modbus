@@ -32,6 +32,9 @@ V1, V2 et V3 soufflent de l'air dans le bâtiment. **V4 est monté à l'envers**
 il extrait l'air du bâtiment, ce qui n'a d'intérêt que s'il fait plus chaud
 dedans que dehors.
 
+Réglages par défaut (tous modifiables depuis l'IHM, voir
+[Réglage des seuils](#réglage-des-seuils)) :
+
 | Ventilateur | Mode été | Mode hiver |
 |---|---|---|
 | V1 | T_int ≥ 23 °C | T_int ≥ 26 °C |
@@ -43,7 +46,7 @@ En hiver, une **boucle thermohydraulique** chauffe le bâtiment : les seuils
 sont plus hauts pour profiter de cette chaleur avant de ventiler, et V4
 n'évacue l'air chaud que si l'intérieur dépasse 28 °C.
 
-**Hystérésis de 0,5 °C** : un ventilateur s'arrête 0,5 °C sous son seuil de
+**Hystérésis de 0,5 °C** (par défaut) : un ventilateur s'arrête 0,5 °C sous son seuil de
 démarrage (par exemple V1 démarre à 23 °C et s'arrête sous 22,5 °C). Cela évite
 qu'il s'allume et s'éteigne en permanence quand la température oscille autour
 du seuil.
@@ -134,6 +137,7 @@ Tout le monde peut **consulter** l'IHM. Les commandes demandent de se connecter
 | Acquitter les alarmes (réarmement) | | ✓ | ✓ |
 | Mode été / hiver, modes auto / marche / arrêt | | ✓ | ✓ |
 | Exporter le rapport d'alarmes en PDF | | ✓ | ✓ |
+| Régler les seuils, l'hystérésis et l'alarme haute | | | ✓ |
 | Forcer les températures, simuler des pannes (tests) | | | ✓ |
 
 L'**arrêt d'urgence** reste accessible sans connexion : une sécurité ne doit
@@ -163,6 +167,35 @@ Comme sur une vraie installation, la protection porte sur l'IHM : le protocole
 Modbus n'a pas d'authentification, et `client.py` parle directement à
 l'automate.
 
+## Réglage des seuils
+
+La carte **Réglages des seuils** de l'IHM, réservée à l'administrateur, permet
+de modifier en fonctionnement :
+
+- les seuils de démarrage de V1, V2 et V3, en été et en hiver ;
+- le seuil au-dessus duquel V4 extrait l'air en hiver ;
+- l'hystérésis ;
+- le seuil de l'alarme température haute.
+
+Les nouvelles valeurs sont écrites dans les holding registers 6 à 14 de
+l'automate, qui les applique au cycle suivant. Les seuils affichés sur les
+ventilateurs et la graduation de T_int suivent automatiquement.
+
+Comme un vrai automate, il **refuse un réglage incohérent** et garde alors les
+réglages en vigueur :
+
+- températures entre 0 et 60 °C ;
+- seuils croissants dans chaque saison (V1 ≤ V2 ≤ V3) ;
+- hystérésis entre 0,1 et 5 °C.
+
+L'IHM vérifie les mêmes règles pour afficher un message clair. Chaque
+modification est inscrite dans le journal, avec l'ancienne et la nouvelle
+valeur, et les réglages en vigueur figurent dans le rapport PDF.
+
+Les réglages sont conservés tant que l'automate tourne. Ils reviennent aux
+valeurs par défaut quand on le redémarre, et `client.py` les remet aussi par
+défaut au début et à la fin de son test.
+
 ## Rapport d'alarmes en PDF
 
 Le bouton **Exporter en PDF**, au-dessus du journal, télécharge un rapport
@@ -172,6 +205,7 @@ Le bouton **Exporter en PDF**, au-dessus du journal, télécharge un rapport
   (depuis le démarrage de l'IHM) ;
 - l'état de l'installation à ce moment : mode, températures, arrêt d'urgence,
   marche et mode de chaque ventilateur ;
+- les réglages en vigueur (seuils, hystérésis, alarme haute) ;
 - l'état actuel de chaque alarme et son nombre d'apparitions sur la période ;
 - le journal complet dans l'ordre chronologique : alarmes et actions des
   utilisateurs.
@@ -196,14 +230,21 @@ le client et l'IHM utilisent tous.
 | Holding register | 0 | lecture/écriture | Valeur forcée de T_int |
 | Holding register | 1 | lecture/écriture | Valeur forcée de T_ext |
 | Holding register | 2 à 5 | lecture/écriture | Mode de V1 à V4 : 0 = auto, 1 = marche, 2 = arrêt |
+| Holding register | 6 à 8 | lecture/écriture | Seuils de démarrage V1 à V3 en été |
+| Holding register | 9 à 11 | lecture/écriture | Seuils de démarrage V1 à V3 en hiver |
+| Holding register | 12 | lecture/écriture | Seuil d'extraction V4 en hiver |
+| Holding register | 13 | lecture/écriture | Hystérésis |
+| Holding register | 14 | lecture/écriture | Seuil de l'alarme température haute |
 | Discrete input | 0 à 3 | lecture seule | Retour de marche de V1 à V4 |
 | Input register | 0 | lecture seule | T_int |
 | Input register | 1 | lecture seule | T_ext |
 | Input register | 2 | lecture seule | Mot d'alarmes actives |
 | Input register | 3 | lecture seule | Mot d'alarmes mémorisées (à acquitter) |
 
-Les températures sont transmises en **dixièmes de degré**, en entier signé
-16 bits pour accepter les valeurs négatives (23,4 °C → 234).
+Les températures, seuils et hystérésis sont transmis en **dixièmes de degré**,
+en entier signé 16 bits pour accepter les valeurs négatives (23,4 °C → 234).
+Les réglages (registres 6 à 14) s'écrivent **en une seule requête** (FC16),
+puisque l'automate vérifie la cohérence de l'ensemble.
 
 Dans les **mots d'alarmes**, chaque bit correspond à une alarme : bit 0 arrêt
 d'urgence, bit 1 température haute, bit 2 défaut capteur T_int, bit 3 défaut
@@ -288,7 +329,9 @@ uv run client.py
 
 Le client parcourt tous les seuils été et hiver en forçant les températures,
 puis teste la conduite et les sécurités : modes manuels, arrêt d'urgence et
-réarmement, panne d'un ventilateur, capteurs hors plage, alarme haute. À chaque
+réarmement, panne d'un ventilateur, capteurs hors plage, alarme haute. Il
+teste enfin les réglages : seuils et hystérésis modifiés, alarme haute abaissée,
+réglage incohérent refusé par l'automate. À chaque
 étape, il vérifie la réaction des ventilateurs et les mots d'alarmes (colonne
 `AL=actives/mémorisées`, en hexadécimal). Le test est réussi si
 toutes les lignes affichent `OK` et que la dernière indique

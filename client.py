@@ -5,8 +5,12 @@
 2. Teste la conduite et les sécurités : mode manuel, arrêt d'urgence et
    réarmement, défaut de rotation, défauts capteurs, alarme haute ; vérifie
    ventilateurs et mots d'alarmes.
-3. Revient en mode été, relâche les forçages et affiche l'évolution libre de
+3. Teste les réglages : seuils, hystérésis et alarme haute modifiés, réglage
+   incohérent refusé par l'automate.
+4. Revient en mode été, relâche les forçages et affiche l'évolution libre de
    la simulation.
+
+Les réglages par défaut sont rétablis au début et à la fin du test.
 """
 
 import sys
@@ -15,7 +19,9 @@ from datetime import datetime
 
 from pymodbus.client import ModbusTcpClient
 
+from server import settings_from_registers, settings_to_registers
 from tp_simu_auto import modbus_map as mm
+from tp_simu_auto.automate import Settings
 
 HOST = "127.0.0.1"
 SETTLE_S = 0.5  # > 2 cycles automate (0.2 s) pour laisser la logique réagir
@@ -116,6 +122,24 @@ SAFETY_SCENARIO = [
 ]
 
 
+DEFAULTS = Settings()
+CUSTOM = Settings(summer_fan_thresholds=(21.0, 22.0, 23.0))
+INVALID = Settings(summer_fan_thresholds=(25.0, 22.0, 23.0))  # non croissants : refusé
+WIDE_HYSTERESIS = Settings(summer_fan_thresholds=(21.0, 22.0, 23.0), hysteresis=2.0)
+LOW_ALARM = Settings(summer_fan_thresholds=(21.0, 22.0, 23.0), t_int_high_alarm=30.0)
+
+# (réglages écrits ou None, T_int, T_ext forcées, ventilateurs attendus,
+# réglages attendus dans les registres, mot d'alarmes actives attendu, commentaire)
+SETTINGS_SCENARIO = [
+    (DEFAULTS, 22.0, 30.0, (0, 0, 0, 0), DEFAULTS, 0, "reglages par defaut, 22 C : tout arrete"),
+    (CUSTOM, 22.0, 30.0, (1, 1, 0, 0), CUSTOM, 0, "seuils ete 21/22/23 : V1 V2 a 22 C"),
+    (INVALID, 22.0, 30.0, (1, 1, 0, 0), CUSTOM, 0, "seuils non croissants : refuses"),
+    (WIDE_HYSTERESIS, 20.5, 30.0, (1, 1, 0, 0), WIDE_HYSTERESIS, 0, "hysteresis 2 C : maintenus a 20.5 C"),
+    (LOW_ALARM, 31.0, 30.0, (1, 1, 1, 1), LOW_ALARM, 1 << mm.ALARM_T_INT_HIGH, "alarme haute a 30 C"),
+    (DEFAULTS, 24.0, 20.0, (1, 1, 0, 1), DEFAULTS, 0, "retour aux reglages par defaut"),
+]
+
+
 def check(rr, what: str):
     if rr.isError():
         raise RuntimeError(f"Erreur Modbus ({what}) : {rr}")
@@ -168,6 +192,26 @@ def set_fan_mode(client: ModbusTcpClient, fan: int, mode: int) -> None:
         client.write_register(FAN_MODE_REGISTERS[fan - 1], mode, device_id=mm.DEVICE_ID),
         "ecriture mode ventilateur",
     )
+
+
+def write_settings(client: ModbusTcpClient, settings: Settings) -> None:
+    """Écrit tous les réglages en une requête (FC16), comme l'exige l'automate."""
+    check(
+        client.write_registers(
+            mm.HR_SETTINGS_START, settings_to_registers(settings), device_id=mm.DEVICE_ID
+        ),
+        "ecriture reglages",
+    )
+
+
+def read_settings(client: ModbusTcpClient) -> Settings:
+    regs = check(
+        client.read_holding_registers(
+            mm.HR_SETTINGS_START, count=mm.HR_SETTINGS_COUNT, device_id=mm.DEVICE_ID
+        ),
+        "lecture reglages",
+    ).registers
+    return settings_from_registers(regs)
 
 
 def reset_safety(client: ModbusTcpClient) -> None:
@@ -245,6 +289,27 @@ def run_safety_scenario(client: ModbusTcpClient) -> int:
     return errors
 
 
+def run_settings_scenario(client: ModbusTcpClient) -> int:
+    """Joue le scénario des réglages, renvoie le nombre d'écarts constatés."""
+    print("=== Scenario reglages ===")
+    write_coil(client, mm.COIL_SUMMER_MODE, True)
+    errors = 0
+    for settings, t_int, t_ext, expected, in_force, active, comment in SETTINGS_SCENARIO:
+        write_settings(client, settings)
+        force_temperatures(client, t_int, t_ext)
+        time.sleep(SETTLE_S)
+        state = read_state(client)
+        words = read_alarms(client)
+        ok = (
+            tuple(int(on) for on in state[2]) == expected
+            and read_settings(client) == in_force
+            and words[0] == active
+        )
+        errors += not ok
+        print(f"{format_state(*state)}  AL={words[0]:02X}  {'OK   ' if ok else 'ECART'} {comment}")
+    return errors
+
+
 def free_run(client: ModbusTcpClient) -> None:
     print("=== Forcages relaches : simulation libre ===")
     write_coil(client, mm.COIL_FORCE_T_INT, False)
@@ -263,11 +328,14 @@ def main() -> int:
     try:
         print("=== Etat initial ===")
         print(format_state(*read_state(client)))
+        write_settings(client, DEFAULTS)
         reset_safety(client)
         errors = run_scenario(client)
         errors += run_safety_scenario(client)
+        errors += run_settings_scenario(client)
         free_run(client)
     finally:
+        write_settings(client, DEFAULTS)
         reset_safety(client)
         client.close()
     print(f"Scenario termine : {errors} ecart(s).")

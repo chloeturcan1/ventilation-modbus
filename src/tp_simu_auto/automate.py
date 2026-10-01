@@ -2,7 +2,9 @@
 
 Le modèle ne connaît rien de Modbus : il est piloté par server.py, qui lui
 transmet les commandes (mode, forçages) lues dans les coils/holding registers et
-recopie températures et états des ventilateurs dans les registres.
+recopie températures et états des ventilateurs dans les registres. Seules les
+plages de réglage acceptées (SETPOINT_MIN...) sont lues dans modbus_map, qui
+les partage avec l'IHM.
 
 Physique simplifiée, en temps accéléré pour la démonstration :
 
@@ -13,11 +15,12 @@ Physique simplifiée, en temps accéléré pour la démonstration :
   à travers les parois, et chaque ventilateur en marche ajoute un échange d'air
   qui rapproche l'intérieur de la température extérieure.
 
-Logique (avec hystérésis pour éviter les battements autour des seuils) :
+Logique (avec hystérésis pour éviter les battements autour des seuils ; les
+valeurs citées sont les réglages par défaut, modifiables via Settings) :
 
 - V1, V2, V3 (soufflage) : marche à partir de 23 / 24 / 25 °C intérieur en été,
   26 / 27 / 28 °C en hiver (on profite de la chaleur de la boucle),
-  arrêt quand la température repasse sous seuil - hystérésis ;
+  arrêt quand la température repasse sous seuil - hystérésis (0,5 °C) ;
 - V4 (monté à l'envers, extraction) : marche seulement si T_int > T_ext,
   et en hiver seulement si de plus T_int > 28 °C ;
   arrêt quand T_int < T_ext - hystérésis (ou, en hiver, T_int < 28 - hystérésis).
@@ -41,6 +44,8 @@ les alarmes mémorisées dont la cause a disparu.
 import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
+
+from tp_simu_auto import modbus_map as mm
 
 
 def _with_hysteresis(on: bool, value: float, threshold: float, hysteresis: float) -> bool:
@@ -70,6 +75,40 @@ class Alarm(Enum):
 FAN_ALARMS = (Alarm.FAN_1, Alarm.FAN_2, Alarm.FAN_3, Alarm.FAN_4)
 
 
+@dataclass(frozen=True)
+class Settings:
+    """Réglages de la logique, modifiables en fonctionnement depuis l'IHM."""
+
+    summer_fan_thresholds: tuple[float, float, float] = (23.0, 24.0, 25.0)
+    winter_fan_thresholds: tuple[float, float, float] = (26.0, 27.0, 28.0)
+    winter_extract_threshold: float = 28.0  # V4 en hiver : T_int doit dépasser ce seuil
+    hysteresis: float = 0.5
+    t_int_high_alarm: float = 35.0
+
+    def errors(self) -> list[str]:
+        """Raisons de refuser ces réglages (liste vide si ils sont cohérents).
+
+        Mêmes règles que checkSettings() dans ihm/server.js.
+        """
+        errors = []
+        setpoints = {
+            "seuils ete": self.summer_fan_thresholds,
+            "seuils hiver": self.winter_fan_thresholds,
+            "seuil extraction hiver": (self.winter_extract_threshold,),
+            "seuil alarme haute": (self.t_int_high_alarm,),
+        }
+        for name, values in setpoints.items():
+            if any(not mm.SETPOINT_MIN <= v <= mm.SETPOINT_MAX for v in values):
+                errors.append(f"{name} hors de {mm.SETPOINT_MIN}..{mm.SETPOINT_MAX} C")
+        for name in ("seuils ete", "seuils hiver"):
+            v1, v2, v3 = setpoints[name]
+            if not v1 <= v2 <= v3:
+                errors.append(f"{name} non croissants (V1 <= V2 <= V3)")
+        if not mm.HYSTERESIS_MIN <= self.hysteresis <= mm.HYSTERESIS_MAX:
+            errors.append(f"hysteresis hors de {mm.HYSTERESIS_MIN}..{mm.HYSTERESIS_MAX} C")
+        return errors
+
+
 @dataclass
 class Automate:
     """Ventilation à 4 ventilateurs, capteurs de température intérieur et extérieur."""
@@ -92,14 +131,10 @@ class Automate:
     alarms_active: set[Alarm] = field(default_factory=set)
     alarms_latched: set[Alarm] = field(default_factory=set)
 
-    # Logique
-    summer_fan_thresholds: tuple[float, float, float] = (23.0, 24.0, 25.0)
-    winter_fan_thresholds: tuple[float, float, float] = (26.0, 27.0, 28.0)
-    winter_extract_threshold: float = 28.0  # V4 en hiver : T_int doit dépasser ce seuil
-    hysteresis: float = 0.5
+    # Logique et seuil d'alarme haute
+    settings: Settings = field(default_factory=Settings)
 
     # Sécurités
-    t_int_high_alarm: float = 35.0
     sensor_min: float = -40.0  # plage de mesure des capteurs : hors plage = défaut capteur
     sensor_max: float = 80.0
     fan_feedback_delay_s: float = 2.0  # délai toléré entre commande et retour de marche
@@ -170,8 +205,8 @@ class Automate:
         t_int_high = _with_hysteresis(
             Alarm.T_INT_HIGH in self.alarms_active,
             self.t_int,
-            self.t_int_high_alarm,
-            self.hysteresis,
+            self.settings.t_int_high_alarm,
+            self.settings.hysteresis,
         )
         causes = {
             Alarm.EMERGENCY_STOP: self.emergency_stop,
@@ -191,28 +226,29 @@ class Automate:
             self.auto_fans = [True, False, False, False]
             return
 
+        settings = self.settings
         thresholds = (
-            self.summer_fan_thresholds if self.summer_mode else self.winter_fan_thresholds
+            settings.summer_fan_thresholds if self.summer_mode else settings.winter_fan_thresholds
         )
         new = [
-            _with_hysteresis(on, self.t_int, threshold, self.hysteresis)
+            _with_hysteresis(on, self.t_int, threshold, settings.hysteresis)
             for on, threshold in zip(self.auto_fans[:3], thresholds)
         ]
 
         # V4 : marche seulement si T_int > T_ext (strict : à égalité, extraire ne sert
-        # à rien) ; en hiver, il faut en plus T_int > 28 °C (strict aussi).
+        # à rien) ; en hiver, il faut en plus T_int > seuil d'extraction (strict aussi).
         # Sans mesure extérieure, la comparaison est impossible : V4 reste à l'arrêt.
         delta = self.t_int - self.t_ext
         if not t_ext_ok:
             v4 = False
         elif self.auto_fans[3]:
-            v4 = delta >= -self.hysteresis and (
+            v4 = delta >= -settings.hysteresis and (
                 self.summer_mode
-                or self.t_int >= self.winter_extract_threshold - self.hysteresis
+                or self.t_int >= settings.winter_extract_threshold - settings.hysteresis
             )
         else:
             v4 = delta > 0 and (
-                self.summer_mode or self.t_int > self.winter_extract_threshold
+                self.summer_mode or self.t_int > settings.winter_extract_threshold
             )
         new.append(v4)
         self.auto_fans = new

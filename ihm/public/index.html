@@ -186,6 +186,19 @@
   .seg button:disabled, .mode button:disabled, .faults input:disabled { cursor: default; }
   .faults label:has(input:disabled) { cursor: default; opacity: .6; }
   .locked-hint { color: var(--muted); font-size: 13px; margin: -4px 0 8px; }
+
+  /* --- Réglages des seuils --- */
+  .settings { margin-bottom: 16px; }
+  .settings-grid { display: grid; grid-template-columns: minmax(0, 1fr) 96px 96px; gap: 8px 12px; align-items: center; max-width: 480px; }
+  .settings-grid .col { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .settings-grid label { font-weight: 600; }
+  .settings-grid .wide { grid-column: 2 / span 2; }
+  .settings input {
+    width: 100%; max-width: 110px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .settings .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+  .settings .sub { margin-top: 10px; }
   .locked-hint[hidden] { display: none; }
   .alarm-head .actions { display: flex; gap: 8px; }
   dialog {
@@ -266,9 +279,41 @@
     </div>
   </section>
 
+  <section class="card settings">
+    <h2>Réglages des seuils</h2>
+    <p class="locked-hint admin-hint">Réservé à l'administrateur.</p>
+    <form id="settings-form" novalidate>
+      <div class="settings-grid">
+        <span></span><span class="col">Été</span><span class="col">Hiver</span>
+        <label for="set-summer-1">V1 démarre à</label>
+        <input id="set-summer-1" type="number" step="0.1" data-need="admin" aria-label="Seuil V1 été">
+        <input id="set-winter-1" type="number" step="0.1" data-need="admin" aria-label="Seuil V1 hiver">
+        <label for="set-summer-2">V2 démarre à</label>
+        <input id="set-summer-2" type="number" step="0.1" data-need="admin" aria-label="Seuil V2 été">
+        <input id="set-winter-2" type="number" step="0.1" data-need="admin" aria-label="Seuil V2 hiver">
+        <label for="set-summer-3">V3 démarre à</label>
+        <input id="set-summer-3" type="number" step="0.1" data-need="admin" aria-label="Seuil V3 été">
+        <input id="set-winter-3" type="number" step="0.1" data-need="admin" aria-label="Seuil V3 hiver">
+        <label for="set-winter-extract">V4 en hiver, si T_int &gt;</label>
+        <span class="sub">—</span>
+        <input id="set-winter-extract" type="number" step="0.1" data-need="admin">
+        <label for="set-hysteresis">Hystérésis</label>
+        <input id="set-hysteresis" class="wide" type="number" step="0.1" data-need="admin">
+        <label for="set-high">Alarme température haute</label>
+        <input id="set-high" class="wide" type="number" step="0.1" data-need="admin">
+      </div>
+      <p class="sub">Valeurs en °C. Les seuils d'une saison doivent être croissants (V1 ≤ V2 ≤ V3).
+        Un ventilateur s'arrête quand la température repasse sous son seuil moins l'hystérésis.</p>
+      <div class="actions">
+        <button class="btn primary" type="submit" data-need="admin">Appliquer</button>
+        <button class="btn" type="button" id="settings-cancel" data-need="admin">Annuler</button>
+      </div>
+    </form>
+  </section>
+
   <section class="card">
     <h2>Forçage des températures (tests)</h2>
-    <p class="locked-hint" id="admin-hint">Réservé à l'administrateur.</p>
+    <p class="locked-hint admin-hint">Réservé à l'administrateur.</p>
     <div class="force-row">
       <label for="in-int">Intérieur T_int (°C)</label>
       <input id="in-int" type="number" step="0.1" min="-50" max="100" value="24.0" data-need="admin">
@@ -331,11 +376,6 @@
 </template>
 
 <script>
-  // Seuils affichés : ils doivent correspondre à la logique de automate.py.
-  const SEASONS = {
-    summer: { thresholds: [23, 24, 25], v4: "Extraction · si T_int > T_ext" },
-    winter: { thresholds: [26, 27, 28], v4: "Extraction · si T_int > T_ext et > 28 °C" },
-  };
   const SCALE_MIN = 18, SCALE_MAX = 32;
 
   const $ = (id) => document.getElementById(id);
@@ -418,26 +458,60 @@
   cursor.className = "cursor";
   $("scale-int").appendChild(cursor);
 
-  // Met à jour seuils, descriptions et graduations quand le mode change.
+  // Met à jour seuils, descriptions et graduations quand le mode ou les réglages changent.
   let shownSeason = null;
-  function showSeason(season) {
-    if (season === shownSeason) return;
-    shownSeason = season;
-    const { thresholds, v4 } = SEASONS[season];
+  function showSeason(summer, settings) {
+    const key = JSON.stringify([summer, settings]);
+    if (key === shownSeason) return;
+    shownSeason = key;
+    const thresholds = summer ? settings.summer : settings.winter;
     thresholds.forEach((t, i) => {
-      fanEls[i].querySelector(".fan-desc").textContent = `Soufflage · dès ${t} °C`;
+      fanEls[i].querySelector(".fan-desc").textContent = `Soufflage · dès ${fmt(t)} °C`;
     });
-    fanEls[3].querySelector(".fan-desc").textContent = v4;
+    fanEls[3].querySelector(".fan-desc").textContent = summer
+      ? "Extraction · si T_int > T_ext"
+      : `Extraction · si T_int > T_ext et > ${fmt(settings.winter_extract)} °C`;
     $("scale-int").querySelectorAll(".tick").forEach((t) => t.remove());
     for (const t of thresholds) {
       const tick = document.createElement("div");
       tick.className = "tick";
       tick.style.left = pct(t) + "%";
-      tick.innerHTML = `<span>${t}°</span>`;
+      tick.innerHTML = `<span>${fmt(t)}°</span>`;
       $("scale-int").insertBefore(tick, cursor);
     }
   }
-  showSeason("summer");
+
+  // --- Réglages : les champs suivent l'automate, sauf pendant une saisie ---
+  const SETTING_INPUTS = {
+    "set-summer-1": (s) => s.summer[0], "set-summer-2": (s) => s.summer[1], "set-summer-3": (s) => s.summer[2],
+    "set-winter-1": (s) => s.winter[0], "set-winter-2": (s) => s.winter[1], "set-winter-3": (s) => s.winter[2],
+    "set-winter-extract": (s) => s.winter_extract, "set-hysteresis": (s) => s.hysteresis, "set-high": (s) => s.t_int_high,
+  };
+  let settingsDirty = false;
+  let lastSettings = null;
+  function fillSettings(settings) {
+    lastSettings = settings;
+    if (settingsDirty) return;
+    for (const [id, get] of Object.entries(SETTING_INPUTS)) $(id).value = fmt(get(settings));
+  }
+  $("settings-form").addEventListener("input", () => (settingsDirty = true));
+  $("settings-cancel").addEventListener("click", () => {
+    settingsDirty = false;
+    if (lastSettings) fillSettings(lastSettings);
+  });
+  $("settings-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const v = (id) => parseFloat($(id).value);
+    const ok = await post("/api/settings", {
+      summer: [v("set-summer-1"), v("set-summer-2"), v("set-summer-3")],
+      winter: [v("set-winter-1"), v("set-winter-2"), v("set-winter-3")],
+      winter_extract: v("set-winter-extract"),
+      hysteresis: v("set-hysteresis"),
+      t_int_high: v("set-high"),
+    }, "Réglages refusés : ");
+    // Les registres sont déjà écrits : le prochain état reçu contient les nouvelles valeurs.
+    if (ok) settingsDirty = false;
+  });
 
   // --- Affichage de l'état reçu de l'automate ---
   let inputsInitialised = false;
@@ -457,7 +531,8 @@
     $("t-ext").textContent = fmt(s.t_ext);
     $("badge-int").hidden = !s.force_int;
     $("badge-ext").hidden = !s.force_ext;
-    showSeason(s.summer ? "summer" : "winter");
+    showSeason(s.summer, s.settings);
+    fillSettings(s.settings);
     cursor.style.left = pct(s.t_int) + "%";
 
     const d = s.t_int - s.t_ext;
@@ -512,7 +587,7 @@
     if (user) $("who").querySelector("strong").textContent = user.name;
     $("login-btn").hidden = Boolean(user);
     $("logout-btn").hidden = !user;
-    $("admin-hint").hidden = level >= ROLE_LEVELS.admin;
+    document.querySelectorAll(".admin-hint").forEach((el) => (el.hidden = level >= ROLE_LEVELS.admin));
   }
 
   async function refreshSession() {
@@ -551,7 +626,8 @@
   });
 
   // --- Envoi des commandes ---
-  async function post(url, body) {
+  // Renvoie true si la commande a été acceptée.
+  async function post(url, body, errorPrefix = "Commande refusée : ") {
     $("error").textContent = "";
     try {
       const res = await fetch(url, {
@@ -562,8 +638,10 @@
       const data = await res.json();
       if (res.status === 401) refreshSession(); // session expirée ou serveur IHM redémarré
       if (!data.ok) throw new Error(data.error);
+      return true;
     } catch (err) {
-      $("error").textContent = "Commande refusée : " + err.message;
+      $("error").textContent = errorPrefix + err.message;
+      return false;
     }
   }
 

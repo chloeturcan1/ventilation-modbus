@@ -1,7 +1,7 @@
 """Serveur Modbus TCP simulant l'automate de ventilation.
 
-Toutes les 0.2 s, une tâche asyncio lit les commandes (coils) et les valeurs de
-forçage et modes des ventilateurs (holding registers), fait avancer le modèle
+Toutes les 0.2 s, une tâche asyncio lit les commandes (coils), les valeurs de
+forçage, modes des ventilateurs et réglages (holding registers), fait avancer le modèle
 puis réécrit les températures et mots d'alarmes (input registers) et l'état des
 ventilateurs (discrete inputs).
 Les registres sont donc la seule interface entre l'automate et les clients (IHM).
@@ -20,7 +20,7 @@ from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
 from tp_simu_auto import modbus_map as mm
-from tp_simu_auto.automate import Alarm, Automate, FanMode
+from tp_simu_auto.automate import Alarm, Automate, FanMode, Settings
 
 CYCLE_S = 0.2
 
@@ -51,7 +51,47 @@ def alarm_label(alarm: Alarm) -> str:
     return mm.ALARM_LABELS[ALARM_BITS[alarm]]
 
 
-def build_device() -> SimDevice:
+def settings_to_registers(settings: Settings) -> list[int]:
+    """Bloc de registres HR_SETTINGS_START.. correspondant aux réglages."""
+    values = [0] * mm.HR_SETTINGS_COUNT
+    addresses = {
+        mm.HR_SUMMER_THRESHOLD_1: settings.summer_fan_thresholds[0],
+        mm.HR_SUMMER_THRESHOLD_2: settings.summer_fan_thresholds[1],
+        mm.HR_SUMMER_THRESHOLD_3: settings.summer_fan_thresholds[2],
+        mm.HR_WINTER_THRESHOLD_1: settings.winter_fan_thresholds[0],
+        mm.HR_WINTER_THRESHOLD_2: settings.winter_fan_thresholds[1],
+        mm.HR_WINTER_THRESHOLD_3: settings.winter_fan_thresholds[2],
+        mm.HR_WINTER_EXTRACT_THRESHOLD: settings.winter_extract_threshold,
+        mm.HR_HYSTERESIS: settings.hysteresis,
+        mm.HR_T_INT_HIGH_ALARM: settings.t_int_high_alarm,
+    }
+    for address, value in addresses.items():
+        values[address - mm.HR_SETTINGS_START] = mm.to_register(value)
+    return values
+
+
+def settings_from_registers(registers: list[int]) -> Settings:
+    def value(address: int) -> float:
+        return mm.from_register(registers[address - mm.HR_SETTINGS_START])
+
+    return Settings(
+        summer_fan_thresholds=(
+            value(mm.HR_SUMMER_THRESHOLD_1),
+            value(mm.HR_SUMMER_THRESHOLD_2),
+            value(mm.HR_SUMMER_THRESHOLD_3),
+        ),
+        winter_fan_thresholds=(
+            value(mm.HR_WINTER_THRESHOLD_1),
+            value(mm.HR_WINTER_THRESHOLD_2),
+            value(mm.HR_WINTER_THRESHOLD_3),
+        ),
+        winter_extract_threshold=value(mm.HR_WINTER_EXTRACT_THRESHOLD),
+        hysteresis=value(mm.HR_HYSTERESIS),
+        t_int_high_alarm=value(mm.HR_T_INT_HIGH_ALARM),
+    )
+
+
+def build_device(automate: Automate) -> SimDevice:
     """Construit le datastore : espaces coils / DI / HR / IR séparés.
 
     En mode « blocs séparés », pymodbus exige des blocs de bits par multiples de
@@ -68,8 +108,9 @@ def build_device() -> SimDevice:
             [
                 SimData(
                     mm.HR_FORCED_START,
-                    count=mm.HR_FAN_MODES_START + mm.HR_FAN_MODES_COUNT - mm.HR_FORCED_START,
-                    values=0,  # 0 = FAN_MODE_AUTO pour les 4 ventilateurs
+                    # forçages à 0, modes à 0 (= FAN_MODE_AUTO), puis réglages en vigueur
+                    values=[0] * (mm.HR_SETTINGS_START - mm.HR_FORCED_START)
+                    + settings_to_registers(automate.settings),
                     datatype=DataType.REGISTERS,
                 )
             ],
@@ -125,6 +166,25 @@ async def read_commands(server: ModbusTcpServer, automate: Automate) -> None:
             mm.COIL_FAN_FAULT_4,
         )
     ]
+
+    # Réglages : appliqués seulement s'ils sont cohérents ; sinon on réécrit les
+    # réglages en vigueur, pour que les registres reflètent toujours ce qui est appliqué.
+    registers = await server.async_getValues(
+        mm.DEVICE_ID, mm.FC_HOLDING_REGISTERS, mm.HR_SETTINGS_START, mm.HR_SETTINGS_COUNT
+    )
+    settings = settings_from_registers(registers)
+    if settings != automate.settings:
+        if errors := settings.errors():
+            print(f"Reglages refuses : {', '.join(errors)}")
+            await server.async_setValues(
+                mm.DEVICE_ID,
+                mm.FC_HOLDING_REGISTERS,
+                mm.HR_SETTINGS_START,
+                settings_to_registers(automate.settings),
+            )
+        else:
+            automate.settings = settings
+            print(f"Nouveaux reglages : {settings}")
 
     # Acquittement : impulsion, remise à False une fois traitée.
     if coils[mm.COIL_ACK - mm.COILS_START]:
@@ -189,7 +249,7 @@ async def simulation_loop(server: ModbusTcpServer, automate: Automate) -> None:
 
 async def main() -> None:
     automate = Automate()
-    server = ModbusTcpServer(build_device(), address=("0.0.0.0", mm.PORT))
+    server = ModbusTcpServer(build_device(automate), address=("0.0.0.0", mm.PORT))
     # Les registres reflètent l'état initial avant la première connexion client.
     automate.step(0.0)
     await write_outputs(server, automate)

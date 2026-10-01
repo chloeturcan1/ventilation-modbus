@@ -1,7 +1,7 @@
 """Table d'échange Modbus de l'automate de ventilation.
 
 Seule source de vérité pour les adresses et les facteurs d'échelle : le serveur
-(server.py), le client (client.py) et la future IHM importent ce module, aucune
+(server.py), le client (client.py) et l'IHM (ihm/modbus_map.js) lisent ce module, aucune
 adresse Modbus ne doit être écrite en dur ailleurs.
 
 Les températures sont transmises en dixièmes de degré, codées en entier signé
@@ -49,6 +49,29 @@ HR_FAN_MODES_COUNT = 4
 FAN_MODE_AUTO = 0  # piloté par la logique de l'automate
 FAN_MODE_MANUAL_ON = 1  # marche forcée par l'opérateur
 FAN_MODE_MANUAL_OFF = 2  # arrêt forcé par l'opérateur
+
+# --- Holding registers (lecture/écriture, réglages de la logique) -------------
+# Tous en °C x TEMPERATURE_SCALE, signé. À écrire en un seul bloc (FC16) :
+# l'automate vérifie la cohérence de l'ensemble et, s'il le refuse, réécrit
+# les réglages en vigueur dans les registres.
+HR_SUMMER_THRESHOLD_1 = 6  # démarrage V1 en été
+HR_SUMMER_THRESHOLD_2 = 7
+HR_SUMMER_THRESHOLD_3 = 8
+HR_WINTER_THRESHOLD_1 = 9  # démarrage V1 en hiver
+HR_WINTER_THRESHOLD_2 = 10
+HR_WINTER_THRESHOLD_3 = 11
+HR_WINTER_EXTRACT_THRESHOLD = 12  # V4 en hiver : T_int doit dépasser ce seuil
+HR_HYSTERESIS = 13  # écart d'arrêt sous chaque seuil
+HR_T_INT_HIGH_ALARM = 14  # seuil de l'alarme température intérieure haute
+HR_SETTINGS_START = HR_SUMMER_THRESHOLD_1
+HR_SETTINGS_COUNT = 9
+
+# Plages acceptées pour les réglages, en °C. De plus, les seuils V1, V2, V3
+# d'une même saison doivent être croissants (V1 <= V2 <= V3).
+SETPOINT_MIN = 0.0
+SETPOINT_MAX = 60.0
+HYSTERESIS_MIN = 0.1
+HYSTERESIS_MAX = 5.0
 
 # --- Discrete inputs (lecture seule, retour de marche des ventilateurs) -------
 # Contigus pour être lus en une seule requête FC2.

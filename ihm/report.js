@@ -1,6 +1,6 @@
 // Rapport PDF des remontées d'alarmes, généré à la demande depuis l'IHM.
 //
-// Contenu : état de l'installation au moment de l'export, état et nombre
+// Contenu : état de l'installation et réglages au moment de l'export, état et nombre
 // d'apparitions de chaque alarme, puis journal complet (alarmes et actions des
 // utilisateurs) dans l'ordre chronologique.
 //
@@ -41,6 +41,19 @@ function writeReport(out, { state, journal, startedAt, user, journalSize }) {
         `Ventilateur V${i + 1}`,
         `${on ? "marche" : "arrêt"} · mode ${FAN_MODE_NAMES[state.fan_modes[i]]}${state.fan_defects[i] ? " · DÉFAUT ROTATION" : ""}`,
       ]),
+    ]);
+  }
+
+  if (state.connected) {
+    const st = state.settings;
+    const list = (values) => values.map((v) => v.toFixed(1)).join(" / ") + " °C";
+    section(doc, "Réglages en vigueur");
+    table(doc, [150, 345], [
+      ["Seuils V1 / V2 / V3 été", list(st.summer)],
+      ["Seuils V1 / V2 / V3 hiver", list(st.winter)],
+      ["Extraction V4 en hiver", `si T_int > ${fmtTemp(st.winter_extract)}`],
+      ["Hystérésis", fmtTemp(st.hysteresis)],
+      ["Alarme température haute", fmtTemp(st.t_int_high)],
     ]);
   }
 
