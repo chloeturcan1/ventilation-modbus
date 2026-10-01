@@ -259,6 +259,7 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 │   └── automate.py       # logique, modes, sécurités, alarmes et simulation physique
 ├── server.py             # l'automate : serveur Modbus TCP + cycle de 0,2 s
 ├── client.py             # client de test automatique (seuils, conduite, sécurités)
+├── start.sh              # lance tout en une commande (mise à jour, automate, IHM)
 ├── ihm/
 │   ├── server.js         # serveur de l'IHM : passerelle Modbus <-> navigateur, accès, journal
 │   ├── report.js         # génération du rapport d'alarmes en PDF
@@ -291,7 +292,42 @@ cd ~ && git clone https://github.com/chloeturcan1/ventilation-modbus.git
 `git clone` crée le dossier `ventilation-modbus`. **Ne la lance qu'une seule
 fois** : relancée, elle répond `destination path 'ventilation-modbus' already
 exists`, ce qui veut seulement dire que le projet est déjà téléchargé. Les fois
-suivantes, commence directement à l'étape 2.
+suivantes, passe directement à l'option A ou B ci-dessous.
+
+Ensuite, deux façons de lancer le projet, au choix : tout en une commande
+(**option A**), ou étape par étape en copiant-collant (**option B**). Elles font
+exactement la même chose.
+
+Garde un seul exemplaire du projet sur ton ordinateur : avec plusieurs copies,
+il est facile de lancer une ancienne version sans s'en rendre compte.
+
+### Option A — Tout lancer en une commande
+
+```bash
+cd ~/ventilation-modbus && ./start.sh
+```
+
+Le script [`start.sh`](start.sh) enchaîne les étapes 2 à 4 de l'option B :
+
+1. il arrête une version déjà lancée ;
+2. il récupère la dernière version (`git pull`) et installe les dépendances ;
+3. il lance l'automate puis l'IHM ;
+4. il ouvre la page dans le navigateur.
+
+Les messages de l'automate et de l'IHM s'affichent dans le même onglet,
+précédés de `[automate]` ou `[ihm]`. Laisse cet onglet ouvert, et fais
+**Ctrl+C** pour tout arrêter.
+
+Pour lancer en plus le test automatique (étape 5) :
+
+```bash
+cd ~/ventilation-modbus && ./start.sh --test
+```
+
+Si le Terminal répond `permission denied`, lance-le avec
+`bash start.sh`.
+
+### Option B — Étape par étape (copier-coller)
 
 **Étape 2 — Mettre à jour et installer (à chaque fois)**
 
@@ -346,9 +382,6 @@ voit les ventilateurs réagir en direct.
 
 **Pour tout arrêter** : **Ctrl+C** (la touche Control, pas Cmd) dans chaque
 onglet.
-
-Garde un seul exemplaire du projet sur ton ordinateur : avec plusieurs copies,
-il est facile de lancer une ancienne version sans s'en rendre compte.
 
 ### Problèmes fréquents
 
