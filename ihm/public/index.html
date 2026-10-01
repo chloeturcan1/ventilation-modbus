@@ -164,7 +164,16 @@
     flex: 1 1 220px; max-width: 320px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); font: inherit;
   }
-  #mail-status.ko { color: var(--warn); }
+  .alerts-card h3 { font-size: 14px; margin: 16px 0 6px; }
+  .alerts-card a { color: var(--accent); }
+  .account-on { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .account-on[hidden], .email-form[hidden], #account-cancel[hidden] { display: none; }
+  .account-form .sub { flex-basis: 100%; margin: 0; }
+  .smtp-advanced { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+  .smtp-advanced summary { cursor: pointer; }
+  .smtp-advanced[open] { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .smtp-advanced[open] summary { flex-basis: 100%; }
+  .smtp-advanced #account-port { flex: 0 0 90px; }
   #email-msg { font-size: 13px; font-weight: 600; margin-top: 8px; }
   #email-msg.err { color: var(--err); }
   #email-msg.ok { color: var(--on); }
@@ -360,7 +369,27 @@
     <p class="sub">Un mail est envoyé à ces adresses à chaque arrêt d'urgence. La liste est conservée au redémarrage de l'IHM.</p>
     <p class="locked-hint admin-hint">Réservé à l'administrateur.</p>
     <div id="alerts-admin" hidden>
-      <p class="sub" id="mail-status"></p>
+      <h3>1. Compte d'envoi</h3>
+      <div class="account-on" id="account-on" hidden>
+        <span>Les alertes partent de <strong id="account-user"></strong>.</span>
+        <button class="btn" type="button" id="account-change">Changer</button>
+        <button class="btn" type="button" id="account-delete">Supprimer</button>
+      </div>
+      <form class="email-form account-form" id="account-form" novalidate hidden>
+        <p class="sub">À régler une seule fois. Avec Gmail : activez la validation en deux étapes du compte,
+          puis créez un <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">mot de passe d'application</a>
+          et collez-le ci-dessous (ce n'est pas le mot de passe habituel du compte).</p>
+        <input id="account-address" type="email" placeholder="adresse d'envoi (ex. Gmail)" autocomplete="username" aria-label="Adresse d'envoi">
+        <input id="account-password" type="password" placeholder="mot de passe d'application" autocomplete="new-password" aria-label="Mot de passe d'application">
+        <details class="smtp-advanced">
+          <summary>Autre messagerie : serveur SMTP (facultatif)</summary>
+          <input id="account-host" placeholder="smtp.exemple.fr" aria-label="Serveur SMTP">
+          <input id="account-port" type="number" placeholder="465" aria-label="Port SMTP">
+        </details>
+        <button class="btn primary" type="submit">Enregistrer et vérifier</button>
+        <button class="btn" type="button" id="account-cancel" hidden>Annuler</button>
+      </form>
+      <h3>2. Destinataires</h3>
       <ul class="email-list" id="email-list"></ul>
       <p class="sub" id="email-empty">Aucune adresse enregistrée.</p>
       <form class="email-form" id="email-form" novalidate>
@@ -933,19 +962,59 @@
     );
   }
 
+  // Compte d'envoi : formulaire tant qu'il n'y en a pas, sinon l'adresse utilisée.
+  function renderAccount(account, editing = false) {
+    $("account-on").hidden = !account.configured || editing;
+    $("account-form").hidden = account.configured && !editing;
+    $("account-cancel").hidden = !account.configured;
+    if (account.configured) $("account-user").textContent = account.user;
+    $("account-password").value = "";
+  }
+  let currentAccount = { configured: false };
+
   async function loadAlertEmails() {
     try {
       const data = await api("/api/alert-emails");
       renderEmails(data.emails);
-      const status = $("mail-status");
-      status.className = "sub" + (data.mail.configured ? "" : " ko");
-      status.textContent = data.mail.configured
-        ? `Envoi configuré (serveur ${data.mail.host}).`
-        : data.mail.error || "Envoi non configuré : créez ihm/mail.config.json (voir le README). Les adresses sont enregistrées, mais aucun mail ne part.";
+      currentAccount = data.account;
+      renderAccount(currentAccount);
     } catch (err) {
       emailMessage(err.message, false);
     }
   }
+
+  $("account-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    emailMessage("Vérification auprès du serveur de messagerie...", true);
+    try {
+      const { account } = await api("/api/mail-account", {
+        address: $("account-address").value,
+        password: $("account-password").value,
+        host: $("account-host").value,
+        port: $("account-port").value,
+      });
+      currentAccount = account;
+      renderAccount(account);
+      emailMessage(`Compte vérifié : les alertes partiront de ${account.user}.`, true);
+    } catch (err) {
+      emailMessage(err.message, false);
+    }
+  });
+  $("account-change").addEventListener("click", () => {
+    $("account-address").value = currentAccount.user || "";
+    renderAccount(currentAccount, true);
+  });
+  $("account-cancel").addEventListener("click", () => renderAccount(currentAccount));
+  $("account-delete").addEventListener("click", async () => {
+    if (!confirm("Supprimer le compte d'envoi ? Plus aucun mail d'alerte ne partira.")) return;
+    try {
+      currentAccount = (await api("/api/mail-account/delete", {})).account;
+      renderAccount(currentAccount);
+      emailMessage("Compte d'envoi supprimé.", true);
+    } catch (err) {
+      emailMessage(err.message, false);
+    }
+  });
 
   // Affiche la carte pour l'admin seulement, et vide la liste à la déconnexion.
   function showAlertsCard(isAdmin) {

@@ -513,7 +513,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true });
     } else if (req.method === "GET" && req.url === "/api/alert-emails") {
       requireRole(req, "admin"); // adresses personnelles : visibles par l'admin seulement
-      sendJson(res, 200, { ok: true, emails: alerts.getEmails(), mail: alerts.mailStatus() });
+      sendJson(res, 200, { ok: true, emails: alerts.getEmails(), account: alerts.accountStatus() });
     } else if (req.method === "POST" && req.url === "/api/alert-emails") {
       const user = requireRole(req, "admin");
       const email = alerts.addEmail((await readJson(req)).email);
@@ -524,6 +524,16 @@ const server = http.createServer(async (req, res) => {
       const email = alerts.removeEmail((await readJson(req)).email);
       logAction(user, `Destinataire d'alerte retiré : ${email}`);
       sendJson(res, 200, { ok: true, emails: alerts.getEmails() });
+    } else if (req.method === "POST" && req.url === "/api/mail-account") {
+      const user = requireRole(req, "admin");
+      const result = await alerts.setAccount(await readJson(req));
+      logAction(user, `Compte d'envoi des alertes : ${result.user}`);
+      sendJson(res, 200, { ok: true, account: alerts.accountStatus() });
+    } else if (req.method === "POST" && req.url === "/api/mail-account/delete") {
+      const user = requireRole(req, "admin");
+      alerts.clearAccount();
+      logAction(user, "Compte d'envoi des alertes supprimé");
+      sendJson(res, 200, { ok: true, account: alerts.accountStatus() });
     } else if (req.method === "POST" && req.url === "/api/alert-emails/test") {
       const user = requireRole(req, "admin");
       const n = await alerts.sendToAll(

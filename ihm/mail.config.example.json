@@ -1,7 +1,0 @@
-{
-  "host": "smtp.gmail.com",
-  "port": 465,
-  "user": "votre.adresse@gmail.com",
-  "pass": "mot de passe d'application (16 lettres)",
-  "from": "Ventilation <votre.adresse@gmail.com>"
-}

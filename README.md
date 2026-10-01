@@ -233,44 +233,34 @@ depuis l'extérieur : commande Modbus directe, bouton physique), mode et
 températures. Le mail part dès que l'alarme apparaît, quelle que soit la façon
 dont l'arrêt d'urgence a été déclenché.
 
-La carte **Alertes par mail** de l'IHM, réservée à l'administrateur, permet
-d'ajouter et de retirer des adresses, et d'envoyer un mail de test. La liste
-est enregistrée dans `ihm/data/alert-emails.json` : elle est **conservée quand
-on redémarre l'IHM**. Les destinataires sont en copie cachée, et chacun ne voit
-pas les adresses des autres. Chaque envoi, réussi ou non, est inscrit dans le
-journal.
+Tout se règle dans la carte **Alertes par mail** de l'IHM, réservée à
+l'administrateur, sans aucun fichier à modifier :
 
-### Configurer l'envoi
+1. **Compte d'envoi** (une seule fois) : l'adresse qui enverra les alertes et
+   son mot de passe d'application. Le serveur de messagerie est déduit de
+   l'adresse (Gmail, Outlook / Hotmail, iCloud, Yahoo, Orange, Free). Pour une
+   autre messagerie, renseigner son serveur SMTP. L'IHM vérifie tout de suite
+   les identifiants auprès du serveur avant de les enregistrer.
+2. **Destinataires** : ajouter ou retirer des adresses, puis vérifier avec
+   **Envoyer un mail de test**.
 
-L'IHM envoie les mails par le serveur d'un compte mail (SMTP). Il suffit de le
-décrire une fois dans le fichier `ihm/mail.config.json`, en partant du modèle
-[`ihm/mail.config.example.json`](ihm/mail.config.example.json) :
+Un compte d'envoi est indispensable : les messageries refusent ou classent en
+spam les mails qui ne viennent pas d'un compte authentifié, et les services
+gratuits d'envoi anonyme ont été fermés à cause des abus.
 
-```json
-{
-  "host": "smtp.gmail.com",
-  "port": 465,
-  "user": "votre.adresse@gmail.com",
-  "pass": "mot de passe d'application (16 lettres)",
-  "from": "Ventilation <votre.adresse@gmail.com>"
-}
-```
-
-Avec **Gmail**, le champ `pass` n'est pas le mot de passe du compte, mais un
+Avec **Gmail**, le mot de passe demandé n'est pas celui du compte, mais un
 **mot de passe d'application**. Il faut d'abord activer la validation en deux
 étapes du compte Google, puis le créer sur
-[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
-Pour **Outlook / Hotmail**, utiliser `smtp-mail.outlook.com`, port `587`.
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+et le coller dans l'IHM.
 
-Le fichier est relu à chaque envoi : inutile de redémarrer l'IHM. Le bouton
-**Envoyer un mail de test** permet de vérifier la configuration. Sans ce
-fichier, les adresses restent enregistrées, mais aucun mail ne part, et le
-journal l'indique.
-
-`ihm/mail.config.json` (qui contient un mot de passe) et `ihm/data/` (les
-adresses) ne sont **pas envoyés sur GitHub** : ils sont exclus par
-`.gitignore`. Ils restent propres à chaque ordinateur et à chaque copie du
-projet.
+Le compte d'envoi et la liste des destinataires sont enregistrés dans
+`ihm/data/` : ils sont **conservés quand on redémarre l'IHM**. Ce dossier
+(qui contient un mot de passe) n'est **pas envoyé sur GitHub**, car il est
+exclu par `.gitignore`. Il reste propre à chaque ordinateur et à chaque copie
+du projet. Le mot de passe n'est jamais renvoyé à la page. Les destinataires
+sont en copie cachée, et chacun ne voit pas les adresses des autres. Chaque
+envoi, réussi ou non, est inscrit dans le journal.
 
 À noter : `client.py` déclenche lui aussi des arrêts d'urgence pendant son
 test. Si l'envoi est configuré, chaque test envoie donc des mails d'alerte.
@@ -327,9 +317,8 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 ├── ihm/
 │   ├── server.js         # serveur de l'IHM : passerelle Modbus <-> navigateur, accès, journal
 │   ├── report.js         # génération du rapport d'alarmes en PDF
-│   ├── alerts.js         # alertes par mail : destinataires et envoi
-│   ├── mail.config.example.json  # modèle de configuration de l'envoi des mails
-│   ├── data/             # données locales (adresses d'alerte), non versionnées
+│   ├── alerts.js         # alertes par mail : compte d'envoi, destinataires, envoi
+│   ├── data/             # données locales (compte d'envoi, destinataires), non versionnées
 │   ├── modbus_map.js     # relit les adresses dans modbus_map.py
 │   └── public/index.html # la page de supervision
 └── pyproject.toml, uv.lock, ihm/package.json   # dépendances
