@@ -277,54 +277,60 @@ et [PDFKit](https://pdfkit.org/) pour l'IHM.
 **Prérequis** : [uv](https://docs.astral.sh/uv/getting-started/installation/)
 et [Node.js](https://nodejs.org/).
 
-**Installation** (une seule fois) :
+Les commandes ci-dessous sont pour **macOS** (et Linux), à copier-coller
+**une par une** dans l'app **Terminal** (Cmd+Espace, taper « Terminal »). Le
+projet est installé dans ton dossier personnel : `~/ventilation-modbus`, qui
+apparaît dans le Finder dans le dossier à ton nom.
+
+**Étape 1 — Télécharger le projet (la première fois seulement)**
 
 ```bash
-git clone https://github.com/chloeturcan1/ventilation-modbus.git
-cd ventilation-modbus
-uv sync
-cd ihm && npm install && cd ..
+cd ~ && git clone https://github.com/chloeturcan1/ventilation-modbus.git
 ```
 
-**Tu as déjà le projet sur ton ordinateur ?** Ne refais pas `git clone`, qui
-échoue si le dossier existe déjà. Va dans ton dossier existant et récupère
-la dernière version :
+`git clone` crée le dossier `ventilation-modbus`. **Ne la lance qu'une seule
+fois** : relancée, elle répond `destination path 'ventilation-modbus' already
+exists`, ce qui veut seulement dire que le projet est déjà téléchargé. Les fois
+suivantes, commence directement à l'étape 2.
+
+**Étape 2 — Mettre à jour et installer (à chaque fois)**
+
+Arrête d'abord une éventuelle version déjà lancée, puis récupère la dernière
+version depuis GitHub et installe les dépendances :
 
 ```bash
-cd chemin/vers/ton/dossier
-git pull
-uv sync
-cd ihm && npm install && cd ..
+lsof -ti tcp:502,3000 | xargs kill
 ```
 
-Toutes les commandes suivantes se lancent **depuis le dossier du projet**.
-Garde un seul exemplaire du projet sur ton ordinateur : avec plusieurs
-copies, il est facile de lancer une ancienne version sans s'en rendre compte.
-
-**Terminal 1 — l'automate** (à laisser ouvert) :
-
 ```bash
-uv run server.py
+cd ~/ventilation-modbus && git pull && uv sync && cd ihm && npm install && cd ..
 ```
 
-**Terminal 2 — l'IHM** (à laisser ouvert) :
+**Étape 3 — Lancer l'automate** (dans ce même onglet, à laisser ouvert)
 
 ```bash
-cd ihm
-npm start
+cd ~/ventilation-modbus && uv run server.py
 ```
 
-Ouvre ensuite **http://localhost:3000** dans ton navigateur : températures en
-direct, état des 4 ventilateurs avec leur mode auto / marche / arrêt, bouton
-été/hiver, arrêt d'urgence, alarmes et journal, forçage des températures et
-simulation de pannes. Connecte-toi avec un des comptes de la partie
-[Accès opérateur / administrateur](#accès-opérateur--administrateur) pour
-utiliser les commandes.
-
-**Terminal 3 — test automatique** (facultatif) :
+**Étape 4 — Lancer l'IHM** (nouvel onglet avec **Cmd+T**, à laisser ouvert)
 
 ```bash
-uv run client.py
+cd ~/ventilation-modbus/ihm && npm start
+```
+
+Ouvre ensuite **http://localhost:3000** dans ton navigateur et recharge la page
+avec **Cmd+Shift+R**. Tu y vois les températures en direct, l'état des 4
+ventilateurs avec leur mode auto / marche / arrêt, le bouton été/hiver, l'arrêt
+d'urgence, les alarmes et le journal, les réglages des seuils, le forçage des
+températures et la simulation de pannes. Pour utiliser les commandes, clique sur
+**Se connecter** avec un des comptes de la partie
+[Accès opérateur / administrateur](#accès-opérateur--administrateur)
+(par exemple `admin` / `admin`).
+
+**Étape 5 — Test automatique** (facultatif, nouvel onglet avec **Cmd+T**)
+
+```bash
+cd ~/ventilation-modbus && uv run client.py
 ```
 
 Le client parcourt tous les seuils été et hiver en forçant les températures,
@@ -338,13 +344,17 @@ toutes les lignes affichent `OK` et que la dernière indique
 `Scenario termine : 0 ecart(s).` Si la page web est ouverte en même temps, on
 voit les ventilateurs réagir en direct.
 
-Pour tout arrêter : **Ctrl+C** dans chaque terminal.
+**Pour tout arrêter** : **Ctrl+C** (la touche Control, pas Cmd) dans chaque
+onglet.
+
+Garde un seul exemplaire du projet sur ton ordinateur : avec plusieurs copies,
+il est facile de lancer une ancienne version sans s'en rendre compte.
 
 ### Problèmes fréquents
 
-- **`destination path 'ventilation-modbus' already exists`** : le projet est
-  déjà sur ton ordinateur. Utilise la procédure « Tu as déjà le projet » plus
-  haut au lieu de `git clone`.
+- **`destination path 'ventilation-modbus' already exists`** : ce n'est pas
+  une erreur, le projet est déjà téléchargé. Ne relance pas `git clone` et passe
+  directement à l'étape 2.
 - **`address already in use`**, ou la page affiche une **ancienne version** :
   une automate ou une IHM tourne déjà, peut-être lancée depuis un autre
   dossier ou un autre terminal. Sur macOS ou Linux, arrête-les puis relance :
