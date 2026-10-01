@@ -167,6 +167,18 @@ async def read_commands(server: ModbusTcpServer, automate: Automate) -> None:
         )
     ]
 
+    # Retour aux réglages par défaut : impulsion, remise à False une fois traitée.
+    if coils[mm.COIL_RESTORE_DEFAULTS - mm.COILS_START]:
+        automate.settings = Settings()
+        await server.async_setValues(
+            mm.DEVICE_ID,
+            mm.FC_HOLDING_REGISTERS,
+            mm.HR_SETTINGS_START,
+            settings_to_registers(automate.settings),
+        )
+        await server.async_setValues(mm.DEVICE_ID, mm.FC_COILS, mm.COIL_RESTORE_DEFAULTS, [False])
+        print("Reglages par defaut retablis")
+
     # Réglages : appliqués seulement s'ils sont cohérents ; sinon on réécrit les
     # réglages en vigueur, pour que les registres reflètent toujours ce qui est appliqué.
     registers = await server.async_getValues(

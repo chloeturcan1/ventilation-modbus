@@ -29,8 +29,9 @@ COIL_FAN_FAULT_1 = 5  # Simulation (tests) : panne moteur de V1, il ne tourne pl
 COIL_FAN_FAULT_2 = 6
 COIL_FAN_FAULT_3 = 7
 COIL_FAN_FAULT_4 = 8
+COIL_RESTORE_DEFAULTS = 9  # Impulsion : l'automate remet les réglages par défaut, puis la remet à False
 COILS_START = COIL_SUMMER_MODE
-COILS_COUNT = 9
+COILS_COUNT = 10
 
 # --- Holding registers (lecture/écriture, valeurs de forçage) -----------------
 HR_T_INT_FORCED = 0  # °C x TEMPERATURE_SCALE, signé

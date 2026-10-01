@@ -452,6 +452,13 @@ const server = http.createServer(async (req, res) => {
         }
       }
       sendJson(res, 200, { ok: true });
+    } else if (req.method === "POST" && req.url === "/api/settings/defaults") {
+      const user = requireRole(req, "admin");
+      if (!state.connected) throw new Error("automate injoignable");
+      // L'automate connaît seul les valeurs par défaut : on lui envoie la commande.
+      await setCoil(mm.COIL_RESTORE_DEFAULTS, true); // impulsion remise à false par l'automate
+      logAction(user, "Retour aux réglages par défaut");
+      sendJson(res, 200, { ok: true });
     } else if (req.method === "GET" && req.url === "/api/report.pdf") {
       const user = requireRole(req, "operator");
       const stamp = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "h");

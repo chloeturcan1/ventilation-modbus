@@ -195,6 +195,10 @@ réglages en vigueur :
 - seuils croissants dans chaque saison (V1 ≤ V2 ≤ V3) ;
 - hystérésis entre 0,1 et 5 °C.
 
+Le bouton **Valeurs par défaut** remet tous ces réglages à leur valeur
+d'origine, après confirmation. L'IHM envoie pour cela une commande à
+l'automate (coil 9), qui est seul à connaître les valeurs par défaut.
+
 L'IHM vérifie les mêmes règles pour afficher un message clair. Chaque
 modification est inscrite dans le journal, avec l'ancienne et la nouvelle
 valeur, et les réglages en vigueur figurent dans le rapport PDF.
@@ -234,6 +238,7 @@ le client et l'IHM utilisent tous.
 | Coil | 3 | lecture/écriture | Arrêt d'urgence enfoncé |
 | Coil | 4 | lecture/écriture | Acquittement : écrire 1, l'automate le remet à 0 |
 | Coil | 5 à 8 | lecture/écriture | Panne moteur simulée de V1 à V4 (tests) |
+| Coil | 9 | lecture/écriture | Retour aux réglages par défaut : écrire 1, l'automate le remet à 0 |
 | Holding register | 0 | lecture/écriture | Valeur forcée de T_int |
 | Holding register | 1 | lecture/écriture | Valeur forcée de T_ext |
 | Holding register | 2 à 5 | lecture/écriture | Mode de V1 à V4 : 0 = auto, 1 = marche, 2 = arrêt |
@@ -458,7 +463,7 @@ Le client parcourt tous les seuils été et hiver en forçant les températures,
 puis teste la conduite et les sécurités : modes manuels, arrêt d'urgence et
 réarmement, panne d'un ventilateur, capteurs hors plage, alarme haute. Il
 teste enfin les réglages : seuils et hystérésis modifiés, alarme haute abaissée,
-réglage incohérent refusé par l'automate. À chaque
+réglage incohérent refusé par l'automate, retour aux réglages par défaut. À chaque
 étape, il vérifie la réaction des ventilateurs et les mots d'alarmes (colonne
 `AL=actives/mémorisées`, en hexadécimal). Le test est réussi si
 toutes les lignes affichent `OK` et que la dernière indique

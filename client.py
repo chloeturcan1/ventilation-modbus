@@ -6,7 +6,7 @@
    réarmement, défaut de rotation, défauts capteurs, alarme haute ; vérifie
    ventilateurs et mots d'alarmes.
 3. Teste les réglages : seuils, hystérésis et alarme haute modifiés, réglage
-   incohérent refusé par l'automate.
+   incohérent refusé par l'automate, commande « réglages par défaut ».
 4. Revient en mode été, relâche les forçages et affiche l'évolution libre de
    la simulation.
 
@@ -128,15 +128,16 @@ INVALID = Settings(summer_fan_thresholds=(25.0, 22.0, 23.0))  # non croissants :
 WIDE_HYSTERESIS = Settings(summer_fan_thresholds=(21.0, 22.0, 23.0), hysteresis=2.0)
 LOW_ALARM = Settings(summer_fan_thresholds=(21.0, 22.0, 23.0), t_int_high_alarm=30.0)
 
-# (réglages écrits ou None, T_int, T_ext forcées, ventilateurs attendus,
-# réglages attendus dans les registres, mot d'alarmes actives attendu, commentaire)
+# (réglages écrits, ou None pour la commande « réglages par défaut » de
+# l'automate, T_int, T_ext forcées, ventilateurs attendus, réglages attendus
+# dans les registres, mot d'alarmes actives attendu, commentaire)
 SETTINGS_SCENARIO = [
     (DEFAULTS, 22.0, 30.0, (0, 0, 0, 0), DEFAULTS, 0, "reglages par defaut, 22 C : tout arrete"),
     (CUSTOM, 22.0, 30.0, (1, 1, 0, 0), CUSTOM, 0, "seuils ete 21/22/23 : V1 V2 a 22 C"),
     (INVALID, 22.0, 30.0, (1, 1, 0, 0), CUSTOM, 0, "seuils non croissants : refuses"),
     (WIDE_HYSTERESIS, 20.5, 30.0, (1, 1, 0, 0), WIDE_HYSTERESIS, 0, "hysteresis 2 C : maintenus a 20.5 C"),
     (LOW_ALARM, 31.0, 30.0, (1, 1, 1, 1), LOW_ALARM, 1 << mm.ALARM_T_INT_HIGH, "alarme haute a 30 C"),
-    (DEFAULTS, 24.0, 20.0, (1, 1, 0, 1), DEFAULTS, 0, "retour aux reglages par defaut"),
+    (None, 24.0, 20.0, (1, 1, 0, 1), DEFAULTS, 0, "commande reglages par defaut"),
 ]
 
 
@@ -295,7 +296,10 @@ def run_settings_scenario(client: ModbusTcpClient) -> int:
     write_coil(client, mm.COIL_SUMMER_MODE, True)
     errors = 0
     for settings, t_int, t_ext, expected, in_force, active, comment in SETTINGS_SCENARIO:
-        write_settings(client, settings)
+        if settings is None:
+            write_coil(client, mm.COIL_RESTORE_DEFAULTS, True)
+        else:
+            write_settings(client, settings)
         force_temperatures(client, t_int, t_ext)
         time.sleep(SETTLE_S)
         state = read_state(client)

@@ -307,6 +307,7 @@
       <div class="actions">
         <button class="btn primary" type="submit" data-need="admin">Appliquer</button>
         <button class="btn" type="button" id="settings-cancel" data-need="admin">Annuler</button>
+        <button class="btn" type="button" id="settings-defaults" data-need="admin">Valeurs par défaut</button>
       </div>
     </form>
   </section>
@@ -498,6 +499,11 @@
   $("settings-cancel").addEventListener("click", () => {
     settingsDirty = false;
     if (lastSettings) fillSettings(lastSettings);
+  });
+  $("settings-defaults").addEventListener("click", async () => {
+    if (!confirm("Remettre tous les seuils, l'hystérésis et l'alarme haute à leurs valeurs par défaut ?")) return;
+    const ok = await post("/api/settings/defaults", {}, "Retour aux valeurs par défaut refusé : ");
+    if (ok) settingsDirty = false;
   });
   $("settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
