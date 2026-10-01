@@ -564,3 +564,8 @@ mkdir .venv.nosync
 ln -s .venv.nosync .venv
 uv sync
 ```
+
+## Réalisation
+
+Ce projet a été réalisé avec l'aide de Claude, l'assistant d'intelligence
+artificielle d'Anthropic, pour l'écriture du code et de la documentation.
