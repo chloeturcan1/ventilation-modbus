@@ -151,10 +151,17 @@ Comptes par défaut :
 | `operateur` | `operateur` | opérateur |
 | `admin` | `admin` | administrateur |
 
-Pour changer les mots de passe, lance l'IHM avec des variables d'environnement :
+Pour changer les mots de passe, lancer l'IHM (depuis le dossier `ihm`) avec des
+variables d'environnement. Sous macOS et Linux :
 
 ```bash
 IHM_OPERATOR_PASSWORD=monmotdepasse IHM_ADMIN_PASSWORD=autremotdepasse npm start
+```
+
+Sous Windows (PowerShell) :
+
+```powershell
+$env:IHM_OPERATOR_PASSWORD="monmotdepasse"; $env:IHM_ADMIN_PASSWORD="autremotdepasse"; npm.cmd start
 ```
 
 Le serveur de l'IHM vérifie lui-même le niveau d'accès de chaque commande : les
@@ -259,7 +266,8 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 │   └── automate.py       # logique, modes, sécurités, alarmes et simulation physique
 ├── server.py             # l'automate : serveur Modbus TCP + cycle de 0,2 s
 ├── client.py             # client de test automatique (seuils, conduite, sécurités)
-├── start.sh              # lance tout en une commande (mise à jour, automate, IHM)
+├── start.sh              # lance tout en une commande sous macOS / Linux
+├── start.bat, start.ps1  # lance tout en une commande sous Windows
 ├── ihm/
 │   ├── server.js         # serveur de l'IHM : passerelle Modbus <-> navigateur, accès, journal
 │   ├── report.js         # génération du rapport d'alarmes en PDF
@@ -275,64 +283,59 @@ et [PDFKit](https://pdfkit.org/) pour l'IHM.
 
 ## Tester le projet
 
-**Prérequis** : [uv](https://docs.astral.sh/uv/getting-started/installation/)
-et [Node.js](https://nodejs.org/).
+Le projet se lance de deux façons, au choix, qui font exactement la même chose :
 
-Les commandes ci-dessous sont pour **macOS** (et Linux), à copier-coller
-**une par une** dans l'app **Terminal** (Cmd+Espace, taper « Terminal »). Le
-projet est installé dans ton dossier personnel : `~/ventilation-modbus`, qui
-apparaît dans le Finder dans le dossier à ton nom.
+- **option A** : tout en une commande, avec un script de lancement ;
+- **option B** : étape par étape, en copiant-collant les commandes une par une.
 
-**Étape 1 — Télécharger le projet (la première fois seulement)**
+Suivez la partie correspondant à votre système : [macOS](#macos-et-linux)
+ou [Windows](#windows).
+
+### Prérequis
+
+À installer une seule fois :
+
+| Outil | macOS | Windows |
+|---|---|---|
+| [Git](https://git-scm.com/downloads) | taper `git --version` dans le Terminal, macOS propose de l'installer | installer [Git for Windows](https://git-scm.com/download/win) |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
+| [Node.js](https://nodejs.org/) | installeur « LTS » du site | installeur « LTS » du site |
+
+Après ces installations, **fermez puis rouvrez** le terminal pour qu'il trouve
+les nouvelles commandes. uv télécharge lui-même la bonne version de Python.
+
+### macOS (et Linux)
+
+Les commandes se tapent dans l'app **Terminal** (Cmd+Espace, puis « Terminal »).
+Le projet est installé dans le dossier personnel : `~/ventilation-modbus`.
+
+**1. Télécharger le projet** (la première fois seulement) :
 
 ```bash
 cd ~ && git clone https://github.com/chloeturcan1/ventilation-modbus.git
 ```
 
-`git clone` crée le dossier `ventilation-modbus`. **Ne la lance qu'une seule
-fois** : relancée, elle répond `destination path 'ventilation-modbus' already
-exists`, ce qui veut seulement dire que le projet est déjà téléchargé. Les fois
-suivantes, passe directement à l'option A ou B ci-dessous.
+`git clone` crée le dossier `ventilation-modbus`. Une seconde fois, elle répond
+`destination path 'ventilation-modbus' already exists` : le projet est déjà
+téléchargé, il suffit de passer à l'option A ou B.
 
-Ensuite, deux façons de lancer le projet, au choix : tout en une commande
-(**option A**), ou étape par étape en copiant-collant (**option B**). Elles font
-exactement la même chose.
-
-Garde un seul exemplaire du projet sur ton ordinateur : avec plusieurs copies,
-il est facile de lancer une ancienne version sans s'en rendre compte.
-
-### Option A — Tout lancer en une commande
+#### Option A — En une commande (macOS)
 
 ```bash
 cd ~/ventilation-modbus && ./start.sh
 ```
 
-Le script [`start.sh`](start.sh) enchaîne les étapes 2 à 4 de l'option B :
+Le script [`start.sh`](start.sh) arrête une version déjà lancée, récupère la
+dernière version (`git pull`), installe les dépendances, lance l'automate et
+l'IHM, puis ouvre la page dans le navigateur. Les messages des deux programmes
+s'affichent dans le même onglet, précédés de `[automate]` ou `[ihm]`.
+**Ctrl+C** arrête tout.
 
-1. il arrête une version déjà lancée ;
-2. il récupère la dernière version (`git pull`) et installe les dépendances ;
-3. il lance l'automate puis l'IHM ;
-4. il ouvre la page dans le navigateur.
+Pour lancer en plus le test automatique : `./start.sh --test`.
 
-Les messages de l'automate et de l'IHM s'affichent dans le même onglet,
-précédés de `[automate]` ou `[ihm]`. Laisse cet onglet ouvert, et fais
-**Ctrl+C** pour tout arrêter.
+#### Option B — Étape par étape (macOS)
 
-Pour lancer en plus le test automatique (étape 5) :
-
-```bash
-cd ~/ventilation-modbus && ./start.sh --test
-```
-
-Si le Terminal répond `permission denied`, lance-le avec
-`bash start.sh`.
-
-### Option B — Étape par étape (copier-coller)
-
-**Étape 2 — Mettre à jour et installer (à chaque fois)**
-
-Arrête d'abord une éventuelle version déjà lancée, puis récupère la dernière
-version depuis GitHub et installe les dépendances :
+**2. Arrêter une version déjà lancée, mettre à jour et installer :**
 
 ```bash
 lsof -ti tcp:502,3000 | xargs kill
@@ -342,32 +345,114 @@ lsof -ti tcp:502,3000 | xargs kill
 cd ~/ventilation-modbus && git pull && uv sync && cd ihm && npm install && cd ..
 ```
 
-**Étape 3 — Lancer l'automate** (dans ce même onglet, à laisser ouvert)
+**3. Lancer l'automate** (onglet à laisser ouvert) :
 
 ```bash
 cd ~/ventilation-modbus && uv run server.py
 ```
 
-**Étape 4 — Lancer l'IHM** (nouvel onglet avec **Cmd+T**, à laisser ouvert)
+**4. Lancer l'IHM** (nouvel onglet avec **Cmd+T**, à laisser ouvert) :
 
 ```bash
 cd ~/ventilation-modbus/ihm && npm start
 ```
 
-Ouvre ensuite **http://localhost:3000** dans ton navigateur et recharge la page
-avec **Cmd+Shift+R**. Tu y vois les températures en direct, l'état des 4
-ventilateurs avec leur mode auto / marche / arrêt, le bouton été/hiver, l'arrêt
-d'urgence, les alarmes et le journal, les réglages des seuils, le forçage des
-températures et la simulation de pannes. Pour utiliser les commandes, clique sur
-**Se connecter** avec un des comptes de la partie
-[Accès opérateur / administrateur](#accès-opérateur--administrateur)
-(par exemple `admin` / `admin`).
+Puis ouvrir **http://localhost:3000** et recharger la page avec **Cmd+Shift+R**.
 
-**Étape 5 — Test automatique** (facultatif, nouvel onglet avec **Cmd+T**)
+**5. Test automatique** (facultatif, nouvel onglet avec **Cmd+T**) :
 
 ```bash
 cd ~/ventilation-modbus && uv run client.py
 ```
+
+Pour tout arrêter : **Ctrl+C** (la touche Control, pas Cmd) dans chaque onglet.
+
+### Windows
+
+Les commandes se tapent dans **PowerShell** (touche Windows, puis
+« PowerShell »). Le projet est installé dans le dossier personnel :
+`C:\Users\<nom>\ventilation-modbus`, noté `~\ventilation-modbus` ci-dessous.
+
+**1. Télécharger le projet** (la première fois seulement) :
+
+```powershell
+cd ~; git clone https://github.com/chloeturcan1/ventilation-modbus.git
+```
+
+Une seconde fois, `git clone` répond `destination path 'ventilation-modbus'
+already exists` : le projet est déjà téléchargé, il suffit de passer à
+l'option A ou B.
+
+#### Option A — En une commande (Windows)
+
+```powershell
+cd ~\ventilation-modbus; .\start.bat
+```
+
+On peut aussi **double-cliquer sur `start.bat`** dans l'Explorateur de
+fichiers. Le script arrête une version déjà lancée, récupère la dernière
+version (`git pull`), installe les dépendances, ouvre **deux fenêtres**,
+« Automate » et « IHM », puis ouvre la page dans le navigateur. Pour tout
+arrêter, fermez ces deux fenêtres.
+
+Pour lancer en plus le test automatique : `.\start.bat -Test`.
+
+`start.bat` appelle [`start.ps1`](start.ps1) sans modifier la politique
+d'exécution des scripts de Windows.
+
+#### Option B — Étape par étape (Windows)
+
+**2. Arrêter une version déjà lancée, mettre à jour et installer :**
+
+```powershell
+Get-NetTCPConnection -LocalPort 502,3000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+```
+
+```powershell
+cd ~\ventilation-modbus; git pull; uv sync; cd ihm; npm.cmd install; cd ..
+```
+
+**3. Lancer l'automate** (fenêtre à laisser ouverte) :
+
+```powershell
+cd ~\ventilation-modbus; uv run server.py
+```
+
+Si le pare-feu Windows demande d'autoriser Python, vous pouvez accepter ou
+annuler : l'automate et l'IHM communiquent sur l'ordinateur lui-même, ce que
+le pare-feu ne bloque pas.
+
+**4. Lancer l'IHM** (nouvelle fenêtre PowerShell, à laisser ouverte) :
+
+```powershell
+cd ~\ventilation-modbus\ihm; npm.cmd start
+```
+
+Puis ouvrir **http://localhost:3000** et recharger la page avec **Ctrl+F5**.
+
+**5. Test automatique** (facultatif, nouvelle fenêtre PowerShell) :
+
+```powershell
+cd ~\ventilation-modbus; uv run client.py
+```
+
+Pour tout arrêter : **Ctrl+C** dans chaque fenêtre.
+
+On écrit `npm.cmd` plutôt que `npm` : sur beaucoup de postes Windows,
+PowerShell bloque le script `npm.ps1` (« l'exécution de scripts est
+désactivée sur ce système »), alors que `npm.cmd` fonctionne toujours.
+
+### Utiliser l'IHM
+
+La page **http://localhost:3000** montre les températures en direct, l'état
+des 4 ventilateurs avec leur mode auto / marche / arrêt, le bouton été/hiver,
+l'arrêt d'urgence, les alarmes et le journal, les réglages des seuils, le
+forçage des températures et la simulation de pannes. Pour utiliser les
+commandes, cliquer sur **Se connecter** avec un des comptes de la partie
+[Accès opérateur / administrateur](#accès-opérateur--administrateur), par
+exemple `admin` / `admin`.
+
+### Le test automatique
 
 Le client parcourt tous les seuils été et hiver en forçant les températures,
 puis teste la conduite et les sécurités : modes manuels, arrêt d'urgence et
@@ -380,29 +465,24 @@ toutes les lignes affichent `OK` et que la dernière indique
 `Scenario termine : 0 ecart(s).` Si la page web est ouverte en même temps, on
 voit les ventilateurs réagir en direct.
 
-**Pour tout arrêter** : **Ctrl+C** (la touche Control, pas Cmd) dans chaque
-onglet.
-
 ### Problèmes fréquents
 
 - **`destination path 'ventilation-modbus' already exists`** : ce n'est pas
-  une erreur, le projet est déjà téléchargé. Ne relance pas `git clone` et passe
-  directement à l'étape 2.
+  une erreur, le projet est déjà téléchargé. Ne relancez pas `git clone` et
+  passez directement à l'option A ou B.
 - **`address already in use`**, ou la page affiche une **ancienne version** :
-  une automate ou une IHM tourne déjà, peut-être lancée depuis un autre
-  dossier ou un autre terminal. Sur macOS ou Linux, arrête-les puis relance :
+  un automate ou une IHM tourne déjà, peut-être lancé depuis un autre dossier
+  ou un autre terminal. Relancez avec l'option A, qui l'arrête d'abord, ou
+  utilisez la commande d'arrêt de l'étape 2 de l'option B. Rechargez ensuite la
+  page en vidant le cache (**Cmd+Shift+R** sur Mac, **Ctrl+F5** sous Windows).
+- **`uv`, `npm` ou `git` n'est pas reconnu** : l'outil n'est pas installé, ou
+  le terminal a été ouvert avant son installation. Fermez et rouvrez le terminal.
+- **Windows : « l'exécution de scripts est désactivée sur ce système »** :
+  utilisez `start.bat` plutôt que `start.ps1`, et `npm.cmd` plutôt que `npm`.
+- **Linux** : le port 502 est réservé à l'administrateur. Lancez l'automate
+  avec `sudo`, ou changez `PORT` dans `modbus_map.py`.
 
-  ```bash
-  lsof -ti tcp:502,3000 | xargs kill
-  ```
-
-  Recharge ensuite la page en vidant le cache (**Cmd+Shift+R** sur Mac,
-  **Ctrl+Shift+R** sous Windows et Linux).
-
-> Sous Linux, le port 502 est réservé à l'administrateur : lancer l'automate
-> avec `sudo`, ou changer `PORT` dans `modbus_map.py`.
-
-### Projet dans un dossier synchronisé iCloud (macOS)
+#### Projet dans un dossier synchronisé iCloud (macOS)
 
 Si `uv run server.py` affiche `ModuleNotFoundError: No module named
 'tp_simu_auto'` alors que le projet est dans Documents ou Bureau synchronisés
