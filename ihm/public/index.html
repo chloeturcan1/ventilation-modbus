@@ -4,54 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ventilation - Supervision</title>
+<link rel="stylesheet" href="/common.css">
 <style>
-  :root {
-    --bg: #f3f4f6;
-    --panel: #ffffff;
-    --border: #e2e5ea;
-    --text: #1d2330;
-    --muted: #6b7280;
-    --on: #16a34a;
-    --on-bg: #dcfce7;
-    --off: #9ca3af;
-    --warn: #b45309;
-    --warn-bg: #fef3c7;
-    --err: #dc2626;
-    --err-bg: #fee2e2;
-    --accent: #2563eb;
-    --summer: #ea580c;
-    --winter: #0284c7;
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1218;
-      --panel: #181c25;
-      --border: #2a303c;
-      --text: #e5e7eb;
-      --muted: #9ca3af;
-      --on: #4ade80;
-      --on-bg: #14341f;
-      --off: #4b5563;
-      --warn: #fbbf24;
-      --warn-bg: #3a2c0b;
-      --err: #f87171;
-      --err-bg: #3b1515;
-      --accent: #60a5fa;
-      --summer: #fb923c;
-      --winter: #38bdf8;
-      color-scheme: dark;
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 20px 16px 40px; }
-
   header {
     display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
     margin-bottom: 20px;
@@ -60,7 +14,6 @@
   .clock { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
   .clock .time { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .clock .date { font-size: 12px; color: var(--muted); }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
 
   .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
   .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
@@ -79,14 +32,12 @@
   .temps { grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); margin-bottom: 16px; }
   .fans { grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); margin-bottom: 16px; }
 
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
   .card.dim { opacity: .55; }
 
   .temp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .temp-value { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
   .temp-value small { font-size: 20px; font-weight: 500; color: var(--muted); margin-left: 4px; }
   .badge { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; color: var(--warn); background: var(--warn-bg); }
-  .sub { color: var(--muted); font-size: 13px; }
 
   .scale { position: relative; height: 34px; margin-top: 10px; }
   .scale .bar { position: absolute; left: 0; right: 0; top: 8px; height: 6px; border-radius: 3px; background: var(--border); }
@@ -112,12 +63,6 @@
     width: 110px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); font: inherit; font-variant-numeric: tabular-nums;
   }
-  .btn {
-    padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel);
-    color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
-  }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn:disabled { opacity: .5; cursor: default; }
 
   #error { color: var(--err); font-weight: 600; }
   #error:not(:empty) { margin-top: 8px; }
@@ -150,33 +95,17 @@
   .tools { display: inline-flex; gap: 8px; }
   .tools .btn { font-size: 13px; padding: 6px 10px; }
   .tools .btn[hidden] { display: none; }
+
+  /* Message d'information sous l'en-tête (ex. accès réservé) */
+  .notice {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: -8px 0 16px;
+    padding: 10px 14px; border-radius: 10px; border: 1px solid var(--accent); background: var(--panel); font-weight: 600;
+  }
+  .notice[hidden] { display: none; }
+  .notice span { flex: 1 1 260px; }
+  .notice .btn[hidden] { display: none; }
   body.fullscreen .wrap { max-width: 1500px; }
 
-  /* --- Alertes par mail --- */
-  .alerts-card { margin-bottom: 16px; }
-  .email-list { list-style: none; margin: 10px 0; padding: 0; max-width: 480px; }
-  .email-list li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
-  .email-list li:first-child { border-top: 0; }
-  .email-list li span { flex: 1; overflow-wrap: anywhere; }
-  .email-list .btn { font-size: 12px; padding: 4px 10px; }
-  .email-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  .email-form input {
-    flex: 1 1 220px; max-width: 320px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
-    background: var(--bg); color: var(--text); font: inherit;
-  }
-  .alerts-card h3 { font-size: 14px; margin: 16px 0 6px; }
-  .alerts-card a { color: var(--accent); }
-  .account-on { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-  .account-on[hidden], .email-form[hidden], #account-cancel[hidden] { display: none; }
-  .account-form .sub { flex-basis: 100%; margin: 0; }
-  .smtp-advanced { flex-basis: 100%; font-size: 13px; color: var(--muted); }
-  .smtp-advanced summary { cursor: pointer; }
-  .smtp-advanced[open] { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .smtp-advanced[open] summary { flex-basis: 100%; }
-  .smtp-advanced #account-port { flex: 0 0 90px; }
-  #email-msg { font-size: 13px; font-weight: 600; margin-top: 8px; }
-  #email-msg.err { color: var(--err); }
-  #email-msg.ok { color: var(--on); }
   .journal .ev-mail { color: var(--warn); }
 
   /* --- Ventilateurs : mode et défauts --- */
@@ -228,7 +157,6 @@
   .user .who strong { color: var(--text); }
   .seg button:disabled, .mode button:disabled, .faults input:disabled { cursor: default; }
   .faults label:has(input:disabled) { cursor: default; opacity: .6; }
-  .locked-hint { color: var(--muted); font-size: 13px; margin: -4px 0 8px; }
 
   /* --- Réglages des seuils --- */
   .settings { margin-bottom: 16px; }
@@ -242,7 +170,6 @@
   }
   .settings .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
   .settings .sub { margin-top: 10px; }
-  .locked-hint[hidden] { display: none; }
   .alarm-head .actions { display: flex; gap: 8px; }
   dialog {
     border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; width: min(360px, calc(100% - 32px));
@@ -277,6 +204,7 @@
     <div class="tools">
       <button class="btn" id="sound-btn" aria-pressed="true">Son : activé</button>
       <button class="btn" id="fullscreen-btn">Plein écran</button>
+      <button class="btn" id="alerts-btn">Alertes mail</button>
     </div>
     <div class="user">
       <span class="who" id="who">Consultation seule</span>
@@ -284,6 +212,12 @@
       <button class="btn" id="logout-btn" hidden>Déconnexion</button>
     </div>
   </header>
+
+  <div class="notice" id="notice" role="alert" hidden>
+    <span id="notice-text"></span>
+    <button class="btn primary" id="notice-login">Se connecter</button>
+    <button class="btn" id="notice-close" aria-label="Fermer le message">OK</button>
+  </div>
 
   <div class="banner" id="banner" role="status" hidden>
     <span id="banner-text"></span>
@@ -362,43 +296,6 @@
         <button class="btn" type="button" id="settings-defaults" data-need="admin">Valeurs par défaut</button>
       </div>
     </form>
-  </section>
-
-  <section class="card alerts-card">
-    <h2>Alertes par mail</h2>
-    <p class="sub">Un mail est envoyé à ces adresses à chaque arrêt d'urgence. La liste est conservée au redémarrage de l'IHM.</p>
-    <p class="locked-hint admin-hint">Réservé à l'administrateur.</p>
-    <div id="alerts-admin" hidden>
-      <h3>1. Compte d'envoi</h3>
-      <div class="account-on" id="account-on" hidden>
-        <span>Les alertes partent de <strong id="account-user"></strong>.</span>
-        <button class="btn" type="button" id="account-change">Changer</button>
-        <button class="btn" type="button" id="account-delete">Supprimer</button>
-      </div>
-      <form class="email-form account-form" id="account-form" novalidate hidden>
-        <p class="sub">À régler une seule fois. Avec Gmail : activez la validation en deux étapes du compte,
-          puis créez un <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">mot de passe d'application</a>
-          et collez-le ci-dessous (ce n'est pas le mot de passe habituel du compte).</p>
-        <input id="account-address" type="email" placeholder="adresse d'envoi (ex. Gmail)" autocomplete="username" aria-label="Adresse d'envoi">
-        <input id="account-password" type="password" placeholder="mot de passe d'application" autocomplete="new-password" aria-label="Mot de passe d'application">
-        <details class="smtp-advanced">
-          <summary>Autre messagerie : serveur SMTP (facultatif)</summary>
-          <input id="account-host" placeholder="smtp.exemple.fr" aria-label="Serveur SMTP">
-          <input id="account-port" type="number" placeholder="465" aria-label="Port SMTP">
-        </details>
-        <button class="btn primary" type="submit">Enregistrer et vérifier</button>
-        <button class="btn" type="button" id="account-cancel" hidden>Annuler</button>
-      </form>
-      <h3>2. Destinataires</h3>
-      <ul class="email-list" id="email-list"></ul>
-      <p class="sub" id="email-empty">Aucune adresse enregistrée.</p>
-      <form class="email-form" id="email-form" novalidate>
-        <input id="email-input" type="email" placeholder="prenom.nom@exemple.fr" autocomplete="email" aria-label="Adresse mail à ajouter">
-        <button class="btn primary" type="submit">Ajouter</button>
-        <button class="btn" type="button" id="email-test">Envoyer un mail de test</button>
-      </form>
-      <div id="email-msg" role="status"></div>
-    </div>
   </section>
 
   <section class="card">
@@ -806,7 +703,9 @@
   const ROLE_LEVELS = { operator: 1, admin: 2 };
   const ROLE_NAMES = { operator: "opérateur", admin: "administrateur" };
 
+  let sessionUser = null;
   function applySession(user) {
+    sessionUser = user;
     const level = user ? ROLE_LEVELS[user.role] : 0;
     document.querySelectorAll("[data-need]").forEach((el) => {
       el.disabled = level < ROLE_LEVELS[el.dataset.need];
@@ -816,7 +715,6 @@
     $("login-btn").hidden = Boolean(user);
     $("logout-btn").hidden = !user;
     document.querySelectorAll(".admin-hint").forEach((el) => (el.hidden = level >= ROLE_LEVELS.admin));
-    showAlertsCard(level >= ROLE_LEVELS.admin);
   }
 
   async function refreshSession() {
@@ -924,126 +822,30 @@
   applySession(null);
   refreshSession();
 
-  // --- Alertes par mail (administrateur) ---
-  async function api(url, body) {
-    const res = await fetch(url, body === undefined ? {} : {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (res.status === 401) refreshSession();
-    if (!data.ok) throw new Error(data.error);
-    return data;
+  // --- Alertes par mail : fenêtre séparée, réservée à l'administrateur ---
+  let noticeTimer = null;
+  function notice(text, offerLogin) {
+    $("notice-text").textContent = text;
+    $("notice-login").hidden = !offerLogin;
+    $("notice").hidden = false;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => ($("notice").hidden = true), 8000);
   }
-
-  function emailMessage(text, ok) {
-    $("email-msg").textContent = text;
-    $("email-msg").className = ok ? "ok" : "err";
-  }
-
-  function renderEmails(emails) {
-    $("email-empty").hidden = emails.length > 0;
-    $("email-list").replaceChildren(
-      ...emails.map((email) => {
-        const li = document.createElement("li");
-        li.innerHTML = `<span></span><button class="btn" type="button">Retirer</button>`;
-        li.querySelector("span").textContent = email;
-        li.querySelector("button").addEventListener("click", async () => {
-          try {
-            renderEmails((await api("/api/alert-emails/delete", { email })).emails);
-            emailMessage(`${email} retirée.`, true);
-          } catch (err) {
-            emailMessage(err.message, false);
-          }
-        });
-        return li;
-      })
-    );
-  }
-
-  // Compte d'envoi : formulaire tant qu'il n'y en a pas, sinon l'adresse utilisée.
-  function renderAccount(account, editing = false) {
-    $("account-on").hidden = !account.configured || editing;
-    $("account-form").hidden = account.configured && !editing;
-    $("account-cancel").hidden = !account.configured;
-    if (account.configured) $("account-user").textContent = account.user;
-    $("account-password").value = "";
-  }
-  let currentAccount = { configured: false };
-
-  async function loadAlertEmails() {
-    try {
-      const data = await api("/api/alert-emails");
-      renderEmails(data.emails);
-      currentAccount = data.account;
-      renderAccount(currentAccount);
-    } catch (err) {
-      emailMessage(err.message, false);
-    }
-  }
-
-  $("account-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    emailMessage("Vérification auprès du serveur de messagerie...", true);
-    try {
-      const { account } = await api("/api/mail-account", {
-        address: $("account-address").value,
-        password: $("account-password").value,
-        host: $("account-host").value,
-        port: $("account-port").value,
-      });
-      currentAccount = account;
-      renderAccount(account);
-      emailMessage(`Compte vérifié : les alertes partiront de ${account.user}.`, true);
-    } catch (err) {
-      emailMessage(err.message, false);
-    }
-  });
-  $("account-change").addEventListener("click", () => {
-    $("account-address").value = currentAccount.user || "";
-    renderAccount(currentAccount, true);
-  });
-  $("account-cancel").addEventListener("click", () => renderAccount(currentAccount));
-  $("account-delete").addEventListener("click", async () => {
-    if (!confirm("Supprimer le compte d'envoi ? Plus aucun mail d'alerte ne partira.")) return;
-    try {
-      currentAccount = (await api("/api/mail-account/delete", {})).account;
-      renderAccount(currentAccount);
-      emailMessage("Compte d'envoi supprimé.", true);
-    } catch (err) {
-      emailMessage(err.message, false);
-    }
+  $("notice-close").addEventListener("click", () => ($("notice").hidden = true));
+  $("notice-login").addEventListener("click", () => {
+    $("notice").hidden = true;
+    $("login-btn").click();
   });
 
-  // Affiche la carte pour l'admin seulement, et vide la liste à la déconnexion.
-  function showAlertsCard(isAdmin) {
-    $("alerts-admin").hidden = !isAdmin;
-    if (isAdmin) loadAlertEmails();
-    else {
-      $("email-list").replaceChildren();
-      $("email-msg").textContent = "";
-    }
-  }
-
-  $("email-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = $("email-input").value.trim();
-    try {
-      renderEmails((await api("/api/alert-emails", { email })).emails);
-      $("email-input").value = "";
-      emailMessage(`${email} ajoutée.`, true);
-    } catch (err) {
-      emailMessage(err.message, false);
-    }
-  });
-  $("email-test").addEventListener("click", async () => {
-    emailMessage("Envoi en cours...", true);
-    try {
-      const { sent } = await api("/api/alert-emails/test", {});
-      emailMessage(`Mail de test envoyé à ${sent} destinataire(s).`, true);
-    } catch (err) {
-      emailMessage("Envoi impossible : " + err.message, false);
+  $("alerts-btn").addEventListener("click", () => {
+    if (!sessionUser) {
+      notice("Vous devez être connecté en administrateur pour configurer les alertes par mail.", true);
+    } else if (sessionUser.role !== "admin") {
+      notice("Les alertes par mail sont réservées à l'administrateur : vous êtes connecté en opérateur.", false);
+    } else {
+      // Fenêtre séparée ; si le navigateur bloque les fenêtres, nouvel onglet.
+      const win = window.open("/alertes", "alertes-mail", "width=760,height=860");
+      if (!win) window.open("/alertes", "_blank");
     }
   });
 

@@ -233,8 +233,10 @@ depuis l'extérieur : commande Modbus directe, bouton physique), mode et
 températures. Le mail part dès que l'alarme apparaît, quelle que soit la façon
 dont l'arrêt d'urgence a été déclenché.
 
-Tout se règle dans la carte **Alertes par mail** de l'IHM, réservée à
-l'administrateur, sans aucun fichier à modifier :
+Tout se règle depuis l'IHM, sans aucun fichier à modifier : le bouton
+**Alertes mail**, en haut de la page de supervision, ouvre une fenêtre dédiée.
+Elle est réservée à l'administrateur : sans connexion ou en opérateur, un
+message l'indique et propose de se connecter. La fenêtre comporte deux parties :
 
 1. **Compte d'envoi** (une seule fois) : l'adresse qui enverra les alertes et
    son mot de passe d'application. Le serveur de messagerie est déduit de
@@ -320,7 +322,10 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 │   ├── alerts.js         # alertes par mail : compte d'envoi, destinataires, envoi
 │   ├── data/             # données locales (compte d'envoi, destinataires), non versionnées
 │   ├── modbus_map.js     # relit les adresses dans modbus_map.py
-│   └── public/index.html # la page de supervision
+│   └── public/
+│       ├── index.html    # la page de supervision
+│       ├── alertes.html  # la fenêtre de configuration des alertes par mail
+│       └── common.css    # le style commun aux deux pages
 └── pyproject.toml, uv.lock, ihm/package.json   # dépendances
 ```
 

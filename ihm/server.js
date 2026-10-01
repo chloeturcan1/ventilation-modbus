@@ -10,7 +10,7 @@
 // - tient un journal horodaté des alarmes (apparition, disparition, acquittement)
 //   et des actions des utilisateurs, exportable en rapport PDF ;
 // - envoie un mail d'alerte aux adresses enregistrées à chaque arrêt d'urgence ;
-// - sert la page web (public/index.html).
+// - sert les pages web (public/index.html, public/alertes.html).
 //
 // Toutes les requêtes Modbus passent par une file unique : le client
 // modbus-serial ne doit traiter qu'une transaction à la fois.
@@ -416,13 +416,19 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-const INDEX_HTML = path.join(__dirname, "public", "index.html");
+// Fichiers de la page, servis tels quels (adresse -> fichier, type).
+const STATIC_FILES = {
+  "/": ["index.html", "text/html; charset=utf-8"],
+  "/alertes": ["alertes.html", "text/html; charset=utf-8"],
+  "/common.css": ["common.css", "text/css; charset=utf-8"],
+};
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.method === "GET" && req.url === "/") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      fs.createReadStream(INDEX_HTML).pipe(res);
+    if (req.method === "GET" && Object.hasOwn(STATIC_FILES, req.url)) {
+      const [file, type] = STATIC_FILES[req.url];
+      res.writeHead(200, { "Content-Type": type });
+      fs.createReadStream(path.join(__dirname, "public", file)).pipe(res);
     } else if (req.method === "GET" && req.url === "/events") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
