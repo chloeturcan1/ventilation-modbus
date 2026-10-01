@@ -18,10 +18,12 @@ Physique simplifiée, en temps accéléré pour la démonstration :
 Logique (avec hystérésis pour éviter les battements autour des seuils ; les
 valeurs citées sont les réglages par défaut, modifiables via Settings) :
 
-- V1, V2, V3 (soufflage) : marche à partir de 23 / 24 / 25 °C intérieur en été,
-  26 / 27 / 28 °C en hiver (on profite de la chaleur de la boucle),
+- V1, V2, V3 (extraction de l'air intérieur) : marche à partir de
+  23 / 24 / 25 °C intérieur en été, 26 / 27 / 28 °C en hiver (on profite de la
+  chaleur de la boucle),
   arrêt quand la température repasse sous seuil - hystérésis (0,5 °C) ;
-- V4 (monté à l'envers, extraction) : marche seulement si T_int > T_ext,
+- V4 (monté à l'envers, insufflation d'air extérieur) : marche seulement si
+  T_int > T_ext, c'est-à-dire si l'air extérieur est plus frais,
   et en hiver seulement si de plus T_int > 28 °C ;
   arrêt quand T_int < T_ext - hystérésis (ou, en hiver, T_int < 28 - hystérésis).
 
@@ -81,7 +83,7 @@ class Settings:
 
     summer_fan_thresholds: tuple[float, float, float] = (23.0, 24.0, 25.0)
     winter_fan_thresholds: tuple[float, float, float] = (26.0, 27.0, 28.0)
-    winter_extract_threshold: float = 28.0  # V4 en hiver : T_int doit dépasser ce seuil
+    winter_intake_threshold: float = 28.0  # V4 en hiver : T_int doit dépasser ce seuil
     hysteresis: float = 0.5
     t_int_high_alarm: float = 35.0
 
@@ -94,7 +96,7 @@ class Settings:
         setpoints = {
             "seuils ete": self.summer_fan_thresholds,
             "seuils hiver": self.winter_fan_thresholds,
-            "seuil extraction hiver": (self.winter_extract_threshold,),
+            "seuil insufflation hiver": (self.winter_intake_threshold,),
             "seuil alarme haute": (self.t_int_high_alarm,),
         }
         for name, values in setpoints.items():
@@ -235,8 +237,9 @@ class Automate:
             for on, threshold in zip(self.auto_fans[:3], thresholds)
         ]
 
-        # V4 : marche seulement si T_int > T_ext (strict : à égalité, extraire ne sert
-        # à rien) ; en hiver, il faut en plus T_int > seuil d'extraction (strict aussi).
+        # V4 : marche seulement si T_int > T_ext (strict : à égalité, faire entrer l'air
+        # extérieur ne sert à rien) ; en hiver, il faut en plus T_int > seuil
+        # d'insufflation, pour ne pas refroidir le bâtiment chauffé (strict aussi).
         # Sans mesure extérieure, la comparaison est impossible : V4 reste à l'arrêt.
         delta = self.t_int - self.t_ext
         if not t_ext_ok:
@@ -244,11 +247,11 @@ class Automate:
         elif self.auto_fans[3]:
             v4 = delta >= -settings.hysteresis and (
                 self.summer_mode
-                or self.t_int >= settings.winter_extract_threshold - settings.hysteresis
+                or self.t_int >= settings.winter_intake_threshold - settings.hysteresis
             )
         else:
             v4 = delta > 0 and (
-                self.summer_mode or self.t_int > settings.winter_extract_threshold
+                self.summer_mode or self.t_int > settings.winter_intake_threshold
             )
         new.append(v4)
         self.auto_fans = new

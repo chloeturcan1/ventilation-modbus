@@ -51,7 +51,7 @@ function writeReport(out, { state, journal, startedAt, user, journalSize }) {
     table(doc, [150, 345], [
       ["Seuils V1 / V2 / V3 été", list(st.summer)],
       ["Seuils V1 / V2 / V3 hiver", list(st.winter)],
-      ["Extraction V4 en hiver", `si T_int > ${fmtTemp(st.winter_extract)}`],
+      ["Insufflation V4 en hiver", `si T_int > ${fmtTemp(st.winter_intake)}`],
       ["Hystérésis", fmtTemp(st.hysteresis)],
       ["Alarme température haute", fmtTemp(st.t_int_high)],
     ]);

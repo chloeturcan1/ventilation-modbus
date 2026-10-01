@@ -60,7 +60,7 @@ HR_SUMMER_THRESHOLD_3 = 8
 HR_WINTER_THRESHOLD_1 = 9  # démarrage V1 en hiver
 HR_WINTER_THRESHOLD_2 = 10
 HR_WINTER_THRESHOLD_3 = 11
-HR_WINTER_EXTRACT_THRESHOLD = 12  # V4 en hiver : T_int doit dépasser ce seuil
+HR_WINTER_INTAKE_THRESHOLD = 12  # V4 (insufflation) en hiver : T_int doit dépasser ce seuil
 HR_HYSTERESIS = 13  # écart d'arrêt sous chaque seuil
 HR_T_INT_HIGH_ALARM = 14  # seuil de l'alarme température intérieure haute
 HR_SETTINGS_START = HR_SUMMER_THRESHOLD_1
@@ -75,10 +75,10 @@ HYSTERESIS_MAX = 5.0
 
 # --- Discrete inputs (lecture seule, retour de marche des ventilateurs) -------
 # Contigus pour être lus en une seule requête FC2.
-DI_FAN_1 = 0  # Soufflage, seuil 23 °C été / 26 °C hiver
-DI_FAN_2 = 1  # Soufflage, seuil 24 °C été / 27 °C hiver
-DI_FAN_3 = 2  # Soufflage, seuil 25 °C été / 28 °C hiver
-DI_FAN_4 = 3  # Monté à l'envers (extraction) : T_int > T_ext (et T_int > 28 °C en hiver)
+DI_FAN_1 = 0  # Extraction, seuil 23 °C été / 26 °C hiver (réglages par défaut)
+DI_FAN_2 = 1  # Extraction, seuil 24 °C été / 27 °C hiver
+DI_FAN_3 = 2  # Extraction, seuil 25 °C été / 28 °C hiver
+DI_FAN_4 = 3  # Monté à l'envers (insufflation) : T_int > T_ext (et T_int > 28 °C en hiver)
 DI_FANS_START = DI_FAN_1
 DI_FANS_COUNT = 4
 

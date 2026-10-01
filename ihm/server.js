@@ -48,11 +48,11 @@ const FAN_MODE_REGISTERS = [mm.HR_FAN_MODE_1, mm.HR_FAN_MODE_2, mm.HR_FAN_MODE_3
 const FAN_FAULT_COILS = [mm.COIL_FAN_FAULT_1, mm.COIL_FAN_FAULT_2, mm.COIL_FAN_FAULT_3, mm.COIL_FAN_FAULT_4];
 
 // Réglages : registre, libellé du journal, et lecture / écriture dans l'objet
-// échangé avec la page { summer: [v1, v2, v3], winter: [...], winter_extract, hysteresis, t_int_high }.
+// échangé avec la page { summer: [v1, v2, v3], winter: [...], winter_intake, hysteresis, t_int_high }.
 const SETTINGS = [
   ...[1, 2, 3].map((n) => ({ address: mm[`HR_SUMMER_THRESHOLD_${n}`], label: `Seuil V${n} été`, get: (s) => s.summer[n - 1] })),
   ...[1, 2, 3].map((n) => ({ address: mm[`HR_WINTER_THRESHOLD_${n}`], label: `Seuil V${n} hiver`, get: (s) => s.winter[n - 1] })),
-  { address: mm.HR_WINTER_EXTRACT_THRESHOLD, label: "Seuil extraction V4 hiver", get: (s) => s.winter_extract },
+  { address: mm.HR_WINTER_INTAKE_THRESHOLD, label: "Seuil insufflation V4 hiver", get: (s) => s.winter_intake },
   { address: mm.HR_HYSTERESIS, label: "Hystérésis", get: (s) => s.hysteresis },
   { address: mm.HR_T_INT_HIGH_ALARM, label: "Seuil alarme haute", get: (s) => s.t_int_high },
 ];
@@ -126,7 +126,7 @@ async function readPlc() {
     settings: {
       summer: [mm.HR_SUMMER_THRESHOLD_1, mm.HR_SUMMER_THRESHOLD_2, mm.HR_SUMMER_THRESHOLD_3].map(setting),
       winter: [mm.HR_WINTER_THRESHOLD_1, mm.HR_WINTER_THRESHOLD_2, mm.HR_WINTER_THRESHOLD_3].map(setting),
-      winter_extract: setting(mm.HR_WINTER_EXTRACT_THRESHOLD),
+      winter_intake: setting(mm.HR_WINTER_INTAKE_THRESHOLD),
       hysteresis: setting(mm.HR_HYSTERESIS),
       t_int_high: setting(mm.HR_T_INT_HIGH_ALARM),
     },
@@ -239,7 +239,7 @@ function checkSettings(body) {
   const s = {
     summer: body.summer,
     winter: body.winter,
-    winter_extract: body.winter_extract,
+    winter_intake: body.winter_intake,
     hysteresis: body.hysteresis,
     t_int_high: body.t_int_high,
   };
@@ -251,7 +251,7 @@ function checkSettings(body) {
     }
     if (!(v[0] <= v[1] && v[1] <= v[2])) throw new Error(`seuils ${name} : il faut V1 ≤ V2 ≤ V3`);
   }
-  for (const [key, name] of [["winter_extract", "seuil extraction V4 hiver"], ["t_int_high", "seuil alarme haute"]]) {
+  for (const [key, name] of [["winter_intake", "seuil insufflation V4 hiver"], ["t_int_high", "seuil alarme haute"]]) {
     if (!inRange(s[key], mm.SETPOINT_MIN, mm.SETPOINT_MAX)) {
       throw new Error(`${name} : valeur entre ${mm.SETPOINT_MIN} et ${mm.SETPOINT_MAX} °C attendue`);
     }
@@ -264,7 +264,7 @@ function checkSettings(body) {
   return {
     summer: s.summer.map(round),
     winter: s.winter.map(round),
-    winter_extract: round(s.winter_extract),
+    winter_intake: round(s.winter_intake),
     hysteresis: round(s.hysteresis),
     t_int_high: round(s.t_int_high),
   };

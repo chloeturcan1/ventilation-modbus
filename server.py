@@ -61,7 +61,7 @@ def settings_to_registers(settings: Settings) -> list[int]:
         mm.HR_WINTER_THRESHOLD_1: settings.winter_fan_thresholds[0],
         mm.HR_WINTER_THRESHOLD_2: settings.winter_fan_thresholds[1],
         mm.HR_WINTER_THRESHOLD_3: settings.winter_fan_thresholds[2],
-        mm.HR_WINTER_EXTRACT_THRESHOLD: settings.winter_extract_threshold,
+        mm.HR_WINTER_INTAKE_THRESHOLD: settings.winter_intake_threshold,
         mm.HR_HYSTERESIS: settings.hysteresis,
         mm.HR_T_INT_HIGH_ALARM: settings.t_int_high_alarm,
     }
@@ -85,7 +85,7 @@ def settings_from_registers(registers: list[int]) -> Settings:
             value(mm.HR_WINTER_THRESHOLD_2),
             value(mm.HR_WINTER_THRESHOLD_3),
         ),
-        winter_extract_threshold=value(mm.HR_WINTER_EXTRACT_THRESHOLD),
+        winter_intake_threshold=value(mm.HR_WINTER_INTAKE_THRESHOLD),
         hysteresis=value(mm.HR_HYSTERESIS),
         t_int_high_alarm=value(mm.HR_T_INT_HIGH_ALARM),
     )

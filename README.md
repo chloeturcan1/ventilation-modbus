@@ -28,9 +28,9 @@ flowchart LR
 
 ### Les ventilateurs
 
-V1, V2 et V3 soufflent de l'air dans le bâtiment. **V4 est monté à l'envers** :
-il extrait l'air du bâtiment, ce qui n'a d'intérêt que s'il fait plus chaud
-dedans que dehors.
+V1, V2 et V3 **extraient** l'air chaud du bâtiment. **V4 est monté à l'envers** :
+il **insuffle** l'air extérieur dans le bâtiment, ce qui n'a d'intérêt que si
+l'air du dehors est plus frais que celui du dedans.
 
 Réglages par défaut (tous modifiables depuis l'IHM, voir
 [Réglage des seuils](#réglage-des-seuils)) :
@@ -40,11 +40,11 @@ Réglages par défaut (tous modifiables depuis l'IHM, voir
 | V1 | T_int ≥ 23 °C | T_int ≥ 26 °C |
 | V2 | T_int ≥ 24 °C | T_int ≥ 27 °C |
 | V3 | T_int ≥ 25 °C | T_int ≥ 28 °C |
-| V4 (extraction) | T_int > T_ext | T_int > T_ext **et** T_int > 28 °C |
+| V4 (insufflation) | T_int > T_ext | T_int > T_ext **et** T_int > 28 °C |
 
 En hiver, une **boucle thermohydraulique** chauffe le bâtiment : les seuils
 sont plus hauts pour profiter de cette chaleur avant de ventiler, et V4
-n'évacue l'air chaud que si l'intérieur dépasse 28 °C.
+ne fait entrer l'air froid extérieur que si l'intérieur dépasse 28 °C.
 
 **Hystérésis de 0,5 °C** (par défaut) : un ventilateur s'arrête 0,5 °C sous son seuil de
 démarrage (par exemple V1 démarre à 23 °C et s'arrête sous 22,5 °C). Cela évite
@@ -173,7 +173,7 @@ La carte **Réglages des seuils** de l'IHM, réservée à l'administrateur, perm
 de modifier en fonctionnement :
 
 - les seuils de démarrage de V1, V2 et V3, en été et en hiver ;
-- le seuil au-dessus duquel V4 extrait l'air en hiver ;
+- le seuil au-dessus duquel V4 insuffle l'air extérieur en hiver ;
 - l'hystérésis ;
 - le seuil de l'alarme température haute.
 
@@ -232,7 +232,7 @@ le client et l'IHM utilisent tous.
 | Holding register | 2 à 5 | lecture/écriture | Mode de V1 à V4 : 0 = auto, 1 = marche, 2 = arrêt |
 | Holding register | 6 à 8 | lecture/écriture | Seuils de démarrage V1 à V3 en été |
 | Holding register | 9 à 11 | lecture/écriture | Seuils de démarrage V1 à V3 en hiver |
-| Holding register | 12 | lecture/écriture | Seuil d'extraction V4 en hiver |
+| Holding register | 12 | lecture/écriture | Seuil d'insufflation V4 en hiver |
 | Holding register | 13 | lecture/écriture | Hystérésis |
 | Holding register | 14 | lecture/écriture | Seuil de l'alarme température haute |
 | Discrete input | 0 à 3 | lecture seule | Retour de marche de V1 à V4 |

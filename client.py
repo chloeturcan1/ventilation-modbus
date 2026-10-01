@@ -40,7 +40,7 @@ SCENARIO = [
     (22.4, 30.0, True, (0, 0, 0, 0), "22.4 C < 22.5 : tout arrete"),
     (24.0, 30.0, True, (1, 1, 0, 0), "T_int = 24 < T_ext = 30 : pas de V4"),
     (24.0, 24.0, True, (1, 1, 0, 0), "T_int = T_ext : pas de V4"),
-    (24.0, 20.0, True, (1, 1, 0, 1), "T_int > T_ext -> V4 (extraction)"),
+    (24.0, 20.0, True, (1, 1, 0, 1), "T_int > T_ext -> V4 (insufflation)"),
     # --- Mode hiver : seuils 26 / 27 / 28 C, V4 seulement si de plus T_int > 28 C
     (24.0, 20.0, False, (0, 0, 0, 0), "hiver, 24 C : sous 26 C, tout arrete"),
     (26.0, 5.0, False, (1, 0, 0, 0), "hiver 26 C -> V1"),
