@@ -118,6 +118,65 @@
 
   #error { color: var(--err); font-weight: 600; }
   #error:not(:empty) { margin-top: 8px; }
+
+  /* --- Arrêt d'urgence --- */
+  .estop {
+    padding: 8px 16px; border-radius: 10px; border: 2px solid var(--err); background: var(--panel);
+    color: var(--err); font: inherit; font-weight: 800; letter-spacing: .03em; cursor: pointer;
+  }
+  .estop[aria-pressed="true"] { background: var(--err); color: #fff; }
+
+  /* --- Bandeau d'alarmes --- */
+  .banner {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    padding: 12px 16px; border-radius: 12px; margin-bottom: 16px; font-weight: 700;
+  }
+  .banner[hidden] { display: none; }
+  .banner.active { background: var(--err-bg); color: var(--err); border: 1px solid var(--err); }
+  .banner.latched { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); }
+  .banner span { flex: 1 1 240px; }
+
+  /* --- Ventilateurs : mode et défauts --- */
+  .fan { flex-direction: column; align-items: stretch; }
+  .fan-top { display: flex; align-items: center; gap: 14px; }
+  .fan-top > div { flex: 1; }
+  .fan-name { display: flex; align-items: center; gap: 8px; }
+  .fan.fault svg { color: var(--err); }
+  .fan.fault .fan-state { color: var(--err); }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    flex: 1; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--muted);
+    font: inherit; font-size: 13px; font-weight: 600; padding: 6px 4px; cursor: pointer;
+  }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .seg button[aria-pressed="true"][data-mode="auto"] { background: var(--on); }
+
+  /* --- Alarmes --- */
+  .alarms { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); margin-bottom: 16px; }
+  .alarm-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .alarm-head h2 { margin: 0; }
+  .alarm-list { list-style: none; margin: 0; padding: 0; }
+  .alarm-list li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+  .alarm-list li:first-child { border-top: 0; }
+  .alarm-list .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); flex: none; }
+  .alarm-list .name { flex: 1; }
+  .alarm-list .st { font-size: 12px; font-weight: 700; color: var(--muted); }
+  .alarm-list li.active .dot { background: var(--err); }
+  .alarm-list li.active .st { color: var(--err); }
+  .alarm-list li.latched .dot { background: var(--warn); }
+  .alarm-list li.latched .st { color: var(--warn); }
+  .journal { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; font-size: 13px; }
+  .journal li { display: flex; gap: 10px; padding: 5px 0; border-top: 1px solid var(--border); }
+  .journal li:first-child { border-top: 0; }
+  .journal time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  .journal .ev-apparition { color: var(--err); font-weight: 600; }
+  .journal .ev-acquittement { color: var(--on); }
+  .empty { color: var(--muted); font-size: 13px; }
+
+  .faults { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+  .faults label { flex: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+  .faults input { width: auto; margin: 0; }
 </style>
 </head>
 <body>
@@ -129,7 +188,13 @@
       <button class="summer" data-summer="true" aria-pressed="false">Été</button>
       <button class="winter" data-summer="false" aria-pressed="false">Hiver</button>
     </div>
+    <button class="estop" id="estop" aria-pressed="false">ARRÊT D'URGENCE</button>
   </header>
+
+  <div class="banner" id="banner" role="status" hidden>
+    <span id="banner-text"></span>
+    <button class="btn" data-ack>Acquitter</button>
+  </div>
 
   <section class="grid temps">
     <div class="card" id="card-int">
@@ -153,6 +218,21 @@
   <h2>Ventilateurs</h2>
   <section class="grid fans" id="fans"></section>
 
+  <section class="grid alarms">
+    <div class="card">
+      <div class="alarm-head">
+        <h2>Alarmes</h2>
+        <button class="btn" data-ack>Acquitter</button>
+      </div>
+      <ul class="alarm-list" id="alarm-list"></ul>
+    </div>
+    <div class="card">
+      <div class="alarm-head"><h2>Journal</h2></div>
+      <ul class="journal" id="journal"></ul>
+      <div class="empty" id="journal-empty">Aucun événement depuis le démarrage de l'IHM.</div>
+    </div>
+  </section>
+
   <section class="card">
     <h2>Forçage des températures (tests)</h2>
     <div class="force-row">
@@ -167,12 +247,17 @@
       <button class="btn primary" data-force="t_ext">Forcer</button>
       <button class="btn" data-release="t_ext">Relâcher</button>
     </div>
+    <div class="force-row">
+      <label>Pannes moteur simulées</label>
+      <div class="faults" id="faults"></div>
+    </div>
     <div id="error" role="alert"></div>
   </section>
 </div>
 
 <template id="fan-tpl">
   <div class="card fan">
+    <div class="fan-top">
     <svg viewBox="0 0 64 64" aria-hidden="true">
       <circle cx="32" cy="32" r="29" fill="none" stroke="currentColor" stroke-width="3"/>
       <g class="blades" fill="currentColor">
@@ -183,9 +268,15 @@
       <circle cx="32" cy="32" r="4" fill="currentColor"/>
     </svg>
     <div>
-      <div class="fan-name"></div>
+      <div class="fan-name"><span class="fan-label"></span><span class="badge" hidden>MANU</span></div>
       <div class="sub fan-desc"></div>
       <div class="fan-state">ARRÊT</div>
+    </div>
+    </div>
+    <div class="seg" role="group" aria-label="Mode de conduite">
+      <button data-mode="auto" aria-pressed="true">Auto</button>
+      <button data-mode="on" aria-pressed="false">Marche</button>
+      <button data-mode="off" aria-pressed="false">Arrêt</button>
     </div>
   </div>
 </template>
@@ -204,11 +295,74 @@
   // --- Construction des éléments fixes ---
   const fanEls = ["V1", "V2", "V3", "V4"].map((name, i) => {
     const el = $("fan-tpl").content.firstElementChild.cloneNode(true);
-    el.querySelector(".fan-name").textContent = name;
+    el.querySelector(".fan-label").textContent = name;
     if (i === 3) el.classList.add("reverse"); // V4 est monté à l'envers
+    el.querySelectorAll(".seg button").forEach((b) =>
+      b.addEventListener("click", () => post("/api/fan-mode", { fan: i + 1, mode: b.dataset.mode }))
+    );
     $("fans").appendChild(el);
+
+    const fault = document.createElement("label");
+    fault.innerHTML = `<input type="checkbox"> ${name}`;
+    fault.querySelector("input").addEventListener("change", (e) =>
+      post("/api/fan-fault", { fan: i + 1, fault: e.target.checked })
+    );
+    $("faults").appendChild(fault);
     return el;
   });
+  const faultInputs = [...$("faults").querySelectorAll("input")];
+
+  // Liste des alarmes, construite au premier état reçu (libellés fournis par l'automate).
+  let alarmEls = null;
+  function buildAlarmList(alarms) {
+    alarmEls = alarms.map((a) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="dot"></span><span class="name"></span><span class="st"></span>`;
+      li.querySelector(".name").textContent = a.label;
+      $("alarm-list").appendChild(li);
+      return li;
+    });
+  }
+
+  const ALARM_STATES = {
+    active: "ACTIVE",
+    latched: "À ACQUITTER",
+    normal: "NORMAL",
+  };
+  const timeFmt = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  function renderAlarms(s) {
+    if (!alarmEls) buildAlarmList(s.alarms);
+    s.alarms.forEach((a, i) => {
+      const st = a.active ? "active" : a.latched ? "latched" : "normal";
+      alarmEls[i].className = st;
+      alarmEls[i].querySelector(".st").textContent = ALARM_STATES[st];
+    });
+
+    const active = s.alarms.filter((a) => a.active);
+    const latched = s.alarms.filter((a) => a.latched && !a.active);
+    const banner = $("banner");
+    banner.hidden = !active.length && !latched.length;
+    banner.className = "banner " + (active.length ? "active" : "latched");
+    $("banner-text").textContent = active.length
+      ? `${active.length} alarme(s) active(s) : ${active.map((a) => a.label).join(", ")}`
+      : `En attente d'acquittement : ${latched.map((a) => a.label).join(", ")}`;
+  }
+
+  function renderJournal(journal) {
+    $("journal-empty").hidden = journal.length > 0;
+    $("journal").replaceChildren(
+      ...journal.map((e) => {
+        const li = document.createElement("li");
+        li.innerHTML = `<time></time><span></span>`;
+        li.querySelector("time").textContent = timeFmt.format(e.time);
+        const text = li.querySelector("span");
+        text.textContent = `${e.label} — ${e.event}`;
+        text.className = "ev-" + e.event;
+        return li;
+      })
+    );
+  }
 
   const pct = (t) => ((Math.min(SCALE_MAX, Math.max(SCALE_MIN, t)) - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100;
   const cursor = document.createElement("div");
@@ -244,7 +398,11 @@
     status.className = "pill " + (s.connected ? "ok" : "ko");
     status.textContent = s.connected ? "Automate connecté" : s.ihmDown ? "Serveur IHM injoignable" : "Automate injoignable";
     document.querySelectorAll(".card").forEach((c) => c.classList.toggle("dim", !s.connected));
-    if (!s.connected) return;
+    if (s.journal) renderJournal(s.journal);
+    if (!s.connected) {
+      $("banner").hidden = true;
+      return;
+    }
 
     $("t-int").textContent = fmt(s.t_int);
     $("t-ext").textContent = fmt(s.t_ext);
@@ -256,10 +414,27 @@
     const d = s.t_int - s.t_ext;
     $("delta").textContent = `T_int − T_ext = ${d >= 0 ? "+" : ""}${fmt(d)} °C`;
 
+    const emergencyLock = s.emergency_lock;
     s.fans.forEach((on, i) => {
-      fanEls[i].classList.toggle("on", on);
-      fanEls[i].querySelector(".fan-state").textContent = on ? "MARCHE" : "ARRÊT";
+      const el = fanEls[i];
+      const fault = s.fan_defects[i];
+      el.classList.toggle("on", on);
+      el.classList.toggle("fault", fault);
+      el.querySelector(".fan-state").textContent = on
+        ? "MARCHE"
+        : fault ? "DÉFAUT ROTATION" : emergencyLock ? "ARRÊT SÉCURITÉ" : "ARRÊT";
+      const mode = s.fan_modes[i];
+      el.querySelector(".badge").hidden = mode === "auto";
+      el.querySelectorAll(".seg button").forEach((b) =>
+        b.setAttribute("aria-pressed", String(b.dataset.mode === mode))
+      );
+      faultInputs[i].checked = s.fan_faults[i];
     });
+
+    const estop = $("estop");
+    estop.setAttribute("aria-pressed", String(s.emergency_stop));
+    estop.textContent = s.emergency_stop ? "AU ENFONCÉ — relâcher" : "ARRÊT D'URGENCE";
+    renderAlarms(s);
 
     document.querySelectorAll(".mode button").forEach((b) => {
       b.setAttribute("aria-pressed", String((b.dataset.summer === "true") === s.summer));
@@ -303,6 +478,10 @@
       post("/api/force", { [key]: value });
     })
   );
+  $("estop").addEventListener("click", () =>
+    post("/api/emergency-stop", { pressed: $("estop").getAttribute("aria-pressed") !== "true" })
+  );
+  document.querySelectorAll("[data-ack]").forEach((b) => b.addEventListener("click", () => post("/api/ack", {})));
   document.querySelectorAll("[data-release]").forEach((b) =>
     b.addEventListener("click", () => post("/api/force", { [b.dataset.release]: null }))
   );

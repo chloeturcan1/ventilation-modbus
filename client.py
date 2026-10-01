@@ -2,7 +2,10 @@
 
 1. Force les températures pour parcourir les seuils de la logique été, puis
    ceux de la logique hiver, et vérifie la réponse des ventilateurs (OK / ECART).
-2. Revient en mode été, relâche les forçages et affiche l'évolution libre de
+2. Teste la conduite et les sécurités : mode manuel, arrêt d'urgence et
+   réarmement, défaut de rotation, défauts capteurs, alarme haute ; vérifie
+   ventilateurs et mots d'alarmes.
+3. Revient en mode été, relâche les forçages et affiche l'évolution libre de
    la simulation.
 """
 
@@ -18,6 +21,7 @@ HOST = "127.0.0.1"
 SETTLE_S = 0.5  # > 2 cycles automate (0.2 s) pour laisser la logique réagir
 PERIOD_S = 0.5
 FREE_RUN_S = 5.0
+FAN_FAULT_WAIT_S = 3.0  # > délai de contrôle de rotation de l'automate (2 s)
 
 # (T_int forcée, T_ext forcée, mode été, ventilateurs attendus V1..V4, commentaire)
 SCENARIO = [
@@ -43,6 +47,72 @@ SCENARIO = [
     (27.4, 5.0, False, (1, 1, 0, 0), "hiver 27.4 C < 27.5 : arret V3 et V4"),
     (25.4, 5.0, False, (0, 0, 0, 0), "hiver 25.4 C < 25.5 : tout arrete"),
     (24.0, 20.0, True, (1, 1, 0, 1), "retour mode ete"),
+]
+
+
+def alarms(*bits: int) -> int:
+    """Mot d'alarmes attendu, à partir des numéros de bit ALARM_xxx."""
+    return sum(1 << bit for bit in bits)
+
+
+AU, HIGH, SENSOR_INT, SENSOR_EXT = (
+    mm.ALARM_EMERGENCY_STOP,
+    mm.ALARM_T_INT_HIGH,
+    mm.ALARM_SENSOR_T_INT,
+    mm.ALARM_SENSOR_T_EXT,
+)
+FAN_MODE_REGISTERS = (mm.HR_FAN_MODE_1, mm.HR_FAN_MODE_2, mm.HR_FAN_MODE_3, mm.HR_FAN_MODE_4)
+FAN_FAULT_COILS = (mm.COIL_FAN_FAULT_1, mm.COIL_FAN_FAULT_2, mm.COIL_FAN_FAULT_3, mm.COIL_FAN_FAULT_4)
+
+# (actions, attente, ventilateurs attendus, mot d'alarmes actives, mot d'alarmes
+# mémorisées, commentaire). Actions : ("mode", n° ventilateur, mode),
+# ("au", enfoncé), ("panne", n° ventilateur, en panne), ("ack",), ("temp", T_int, T_ext).
+SAFETY_SCENARIO = [
+    ([("temp", 24.0, 20.0)], SETTLE_S, (1, 1, 0, 1), 0, 0, "ete 24 C, tout en AUTO"),
+    ([("mode", 3, mm.FAN_MODE_MANUAL_ON)], SETTLE_S, (1, 1, 1, 1), 0, 0, "V3 MANU marche"),
+    ([("mode", 1, mm.FAN_MODE_MANUAL_OFF)], SETTLE_S, (0, 1, 1, 1), 0, 0, "V1 MANU arret"),
+    (
+        [("mode", 1, mm.FAN_MODE_AUTO), ("mode", 3, mm.FAN_MODE_AUTO)],
+        SETTLE_S, (1, 1, 0, 1), 0, 0, "retour AUTO",
+    ),
+    ([("au", True)], SETTLE_S, (0, 0, 0, 0), alarms(AU), alarms(AU), "AU enfonce : tout arrete"),
+    (
+        [("mode", 1, mm.FAN_MODE_MANUAL_ON)],
+        SETTLE_S, (0, 0, 0, 0), alarms(AU), alarms(AU), "AU prioritaire sur V1 MANU marche",
+    ),
+    ([("au", False)], SETTLE_S, (0, 0, 0, 0), 0, alarms(AU), "AU relache : pas de redemarrage"),
+    (
+        [("ack",), ("mode", 1, mm.FAN_MODE_AUTO)],
+        SETTLE_S, (1, 1, 0, 1), 0, 0, "acquittement : redemarrage",
+    ),
+    (
+        [("panne", 2, True)],
+        FAN_FAULT_WAIT_S, (1, 0, 0, 1), 0, alarms(mm.ALARM_FAN_2), "panne V2 : defaut rotation",
+    ),
+    (
+        [("panne", 2, False)],
+        SETTLE_S, (1, 0, 0, 1), 0, alarms(mm.ALARM_FAN_2), "V2 repare : reste verrouille",
+    ),
+    ([("ack",)], SETTLE_S, (1, 1, 0, 1), 0, 0, "acquittement : V2 redemarre"),
+    (
+        [("temp", 90.0, 20.0)],
+        SETTLE_S, (1, 0, 0, 0), alarms(SENSOR_INT), alarms(SENSOR_INT),
+        "T_int hors plage : mode degrade, V1 seul",
+    ),
+    (
+        [("temp", 24.0, -60.0)],
+        SETTLE_S, (1, 1, 0, 0), alarms(SENSOR_EXT), alarms(SENSOR_INT, SENSOR_EXT),
+        "T_ext hors plage : arret V4",
+    ),
+    (
+        [("temp", 36.0, 20.0)],
+        SETTLE_S, (1, 1, 1, 1), alarms(HIGH), alarms(SENSOR_INT, SENSOR_EXT, HIGH),
+        "36 C : alarme temperature haute",
+    ),
+    (
+        [("temp", 24.0, 20.0), ("ack",)],
+        SETTLE_S, (1, 1, 0, 1), 0, 0, "retour a la normale et acquittement",
+    ),
 ]
 
 
@@ -75,8 +145,40 @@ def read_state(client: ModbusTcpClient) -> tuple[float, float, list[bool]]:
     return t_int, t_ext, fans
 
 
+def read_alarms(client: ModbusTcpClient) -> tuple[int, int]:
+    """Lit les mots d'alarmes actives et mémorisées (une requête FC4)."""
+    regs = check(
+        client.read_input_registers(
+            mm.IR_ALARMS_START, count=mm.IR_ALARMS_COUNT, device_id=mm.DEVICE_ID
+        ),
+        "lecture alarmes",
+    ).registers
+    return (
+        regs[mm.IR_ALARMS_ACTIVE - mm.IR_ALARMS_START],
+        regs[mm.IR_ALARMS_LATCHED - mm.IR_ALARMS_START],
+    )
+
+
 def write_coil(client: ModbusTcpClient, address: int, value: bool) -> None:
     check(client.write_coil(address, value, device_id=mm.DEVICE_ID), "ecriture coil")
+
+
+def set_fan_mode(client: ModbusTcpClient, fan: int, mode: int) -> None:
+    check(
+        client.write_register(FAN_MODE_REGISTERS[fan - 1], mode, device_id=mm.DEVICE_ID),
+        "ecriture mode ventilateur",
+    )
+
+
+def reset_safety(client: ModbusTcpClient) -> None:
+    """Remet l'automate en conduite normale : tout en AUTO, AU relâché, pas de panne."""
+    for fan in range(1, 5):
+        set_fan_mode(client, fan, mm.FAN_MODE_AUTO)
+        write_coil(client, FAN_FAULT_COILS[fan - 1], False)
+    write_coil(client, mm.COIL_EMERGENCY_STOP, False)
+    time.sleep(SETTLE_S)
+    write_coil(client, mm.COIL_ACK, True)
+    time.sleep(SETTLE_S)
 
 
 def force_temperatures(client: ModbusTcpClient, t_int: float, t_ext: float) -> None:
@@ -113,6 +215,36 @@ def run_scenario(client: ModbusTcpClient) -> int:
     return errors
 
 
+def run_safety_scenario(client: ModbusTcpClient) -> int:
+    """Joue le scénario conduite / sécurités, renvoie le nombre d'écarts constatés."""
+    print("=== Scenario conduite et securites ===")
+    write_coil(client, mm.COIL_SUMMER_MODE, True)
+    errors = 0
+    for actions, wait, expected, active, latched, comment in SAFETY_SCENARIO:
+        for action in actions:
+            match action:
+                case ("temp", t_int, t_ext):
+                    force_temperatures(client, t_int, t_ext)
+                case ("mode", fan, mode):
+                    set_fan_mode(client, fan, mode)
+                case ("au", pressed):
+                    write_coil(client, mm.COIL_EMERGENCY_STOP, pressed)
+                case ("panne", fan, fault):
+                    write_coil(client, FAN_FAULT_COILS[fan - 1], fault)
+                case ("ack",):
+                    write_coil(client, mm.COIL_ACK, True)
+        time.sleep(wait)
+        state = read_state(client)
+        words = read_alarms(client)
+        ok = tuple(int(on) for on in state[2]) == expected and words == (active, latched)
+        errors += not ok
+        print(
+            f"{format_state(*state)}  AL={words[0]:02X}/{words[1]:02X}  "
+            f"{'OK   ' if ok else 'ECART'} {comment}"
+        )
+    return errors
+
+
 def free_run(client: ModbusTcpClient) -> None:
     print("=== Forcages relaches : simulation libre ===")
     write_coil(client, mm.COIL_FORCE_T_INT, False)
@@ -131,9 +263,12 @@ def main() -> int:
     try:
         print("=== Etat initial ===")
         print(format_state(*read_state(client)))
+        reset_safety(client)
         errors = run_scenario(client)
+        errors += run_safety_scenario(client)
         free_run(client)
     finally:
+        reset_safety(client)
         client.close()
     print(f"Scenario termine : {errors} ecart(s).")
     return 1 if errors else 0

@@ -1,8 +1,9 @@
 """Serveur Modbus TCP simulant l'automate de ventilation.
 
 Toutes les 0.2 s, une tâche asyncio lit les commandes (coils) et les valeurs de
-forçage (holding registers), fait avancer le modèle puis réécrit les
-températures (input registers) et l'état des ventilateurs (discrete inputs).
+forçage et modes des ventilateurs (holding registers), fait avancer le modèle
+puis réécrit les températures et mots d'alarmes (input registers) et l'état des
+ventilateurs (discrete inputs).
 Les registres sont donc la seule interface entre l'automate et les clients (IHM).
 
 API pymodbus 3.15 : ModbusDeviceContext / ModbusSequentialDataBlock /
@@ -19,9 +20,35 @@ from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
 from tp_simu_auto import modbus_map as mm
-from tp_simu_auto.automate import Automate
+from tp_simu_auto.automate import Alarm, Automate, FanMode
 
 CYCLE_S = 0.2
+
+FAN_MODES = {
+    mm.FAN_MODE_AUTO: FanMode.AUTO,
+    mm.FAN_MODE_MANUAL_ON: FanMode.MANUAL_ON,
+    mm.FAN_MODE_MANUAL_OFF: FanMode.MANUAL_OFF,
+}
+FAN_MODE_NAMES = {FanMode.AUTO: "AUTO", FanMode.MANUAL_ON: "MANU marche", FanMode.MANUAL_OFF: "MANU arret"}
+ALARM_BITS = {
+    Alarm.EMERGENCY_STOP: mm.ALARM_EMERGENCY_STOP,
+    Alarm.T_INT_HIGH: mm.ALARM_T_INT_HIGH,
+    Alarm.SENSOR_T_INT: mm.ALARM_SENSOR_T_INT,
+    Alarm.SENSOR_T_EXT: mm.ALARM_SENSOR_T_EXT,
+    Alarm.FAN_1: mm.ALARM_FAN_1,
+    Alarm.FAN_2: mm.ALARM_FAN_2,
+    Alarm.FAN_3: mm.ALARM_FAN_3,
+    Alarm.FAN_4: mm.ALARM_FAN_4,
+}
+
+
+def alarm_word(alarms: set[Alarm]) -> int:
+    """Mot d'alarmes : bit ALARM_xxx à 1 pour chaque alarme de l'ensemble."""
+    return sum(1 << ALARM_BITS[alarm] for alarm in alarms)
+
+
+def alarm_label(alarm: Alarm) -> str:
+    return mm.ALARM_LABELS[ALARM_BITS[alarm]]
 
 
 def build_device() -> SimDevice:
@@ -41,15 +68,15 @@ def build_device() -> SimDevice:
             [
                 SimData(
                     mm.HR_FORCED_START,
-                    count=mm.HR_FORCED_COUNT,
-                    values=0,
+                    count=mm.HR_FAN_MODES_START + mm.HR_FAN_MODES_COUNT - mm.HR_FORCED_START,
+                    values=0,  # 0 = FAN_MODE_AUTO pour les 4 ventilateurs
                     datatype=DataType.REGISTERS,
                 )
             ],
             [
                 SimData(
                     mm.IR_SENSORS_START,
-                    count=mm.IR_SENSORS_COUNT,
+                    count=mm.IR_ALARMS_START + mm.IR_ALARMS_COUNT - mm.IR_SENSORS_START,
                     values=0,
                     datatype=DataType.REGISTERS,
                 )
@@ -59,7 +86,7 @@ def build_device() -> SimDevice:
 
 
 async def read_commands(server: ModbusTcpServer, automate: Automate) -> None:
-    """Applique au modèle le mode et les forçages demandés par l'IHM."""
+    """Applique au modèle les commandes de l'IHM : mode, forçages, conduite, sécurités."""
     coils = await server.async_getValues(
         mm.DEVICE_ID, mm.FC_COILS, mm.COILS_START, mm.COILS_COUNT
     )
@@ -76,14 +103,50 @@ async def read_commands(server: ModbusTcpServer, automate: Automate) -> None:
     automate.t_int_forced = t_int if coils[mm.COIL_FORCE_T_INT - mm.COILS_START] else None
     automate.t_ext_forced = t_ext if coils[mm.COIL_FORCE_T_EXT - mm.COILS_START] else None
 
+    modes = await server.async_getValues(
+        mm.DEVICE_ID, mm.FC_HOLDING_REGISTERS, mm.HR_FAN_MODES_START, mm.HR_FAN_MODES_COUNT
+    )
+    for i, address in enumerate(
+        (mm.HR_FAN_MODE_1, mm.HR_FAN_MODE_2, mm.HR_FAN_MODE_3, mm.HR_FAN_MODE_4)
+    ):
+        # Valeur inconnue : repli sur le mode automatique.
+        mode = FAN_MODES.get(modes[address - mm.HR_FAN_MODES_START], FanMode.AUTO)
+        if mode != automate.fan_modes[i]:
+            print(f"V{i + 1} : {FAN_MODE_NAMES[mode]}")
+        automate.fan_modes[i] = mode
+
+    automate.emergency_stop = bool(coils[mm.COIL_EMERGENCY_STOP - mm.COILS_START])
+    automate.fan_faults = [
+        bool(coils[address - mm.COILS_START])
+        for address in (
+            mm.COIL_FAN_FAULT_1,
+            mm.COIL_FAN_FAULT_2,
+            mm.COIL_FAN_FAULT_3,
+            mm.COIL_FAN_FAULT_4,
+        )
+    ]
+
+    # Acquittement : impulsion, remise à False une fois traitée.
+    if coils[mm.COIL_ACK - mm.COILS_START]:
+        automate.acknowledge()
+        await server.async_setValues(mm.DEVICE_ID, mm.FC_COILS, mm.COIL_ACK, [False])
+        print("Acquittement des alarmes")
+
 
 async def write_outputs(server: ModbusTcpServer, automate: Automate) -> None:
-    """Recopie températures et états des ventilateurs dans les registres."""
+    """Recopie températures, mots d'alarmes et états des ventilateurs dans les registres."""
     sensors = [0] * mm.IR_SENSORS_COUNT
     sensors[mm.IR_T_INT - mm.IR_SENSORS_START] = mm.to_register(automate.t_int)
     sensors[mm.IR_T_EXT - mm.IR_SENSORS_START] = mm.to_register(automate.t_ext)
     await server.async_setValues(
         mm.DEVICE_ID, mm.FC_INPUT_REGISTERS, mm.IR_SENSORS_START, sensors
+    )
+
+    alarms = [0] * mm.IR_ALARMS_COUNT
+    alarms[mm.IR_ALARMS_ACTIVE - mm.IR_ALARMS_START] = alarm_word(automate.alarms_active)
+    alarms[mm.IR_ALARMS_LATCHED - mm.IR_ALARMS_START] = alarm_word(automate.alarms_latched)
+    await server.async_setValues(
+        mm.DEVICE_ID, mm.FC_INPUT_REGISTERS, mm.IR_ALARMS_START, alarms
     )
 
     fans = [False] * mm.DI_FANS_COUNT
@@ -105,9 +168,15 @@ async def simulation_loop(server: ModbusTcpServer, automate: Automate) -> None:
         dt, last = now - last, now
 
         previous_fans = list(automate.fans)
+        previous_alarms = set(automate.alarms_active)
         await read_commands(server, automate)
         automate.step(dt)
         await write_outputs(server, automate)
+
+        for alarm in automate.alarms_active - previous_alarms:
+            print(f"ALARME : {alarm_label(alarm)}")
+        for alarm in previous_alarms - automate.alarms_active:
+            print(f"Fin d'alarme : {alarm_label(alarm)}")
 
         if automate.fans != previous_fans:
             states = " ".join(

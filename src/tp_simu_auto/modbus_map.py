@@ -23,8 +23,14 @@ FC_INPUT_REGISTERS = 4  # Read Input Registers
 COIL_SUMMER_MODE = 0  # True = mode été, False = mode hiver (seuils plus hauts, boucle de chauffage)
 COIL_FORCE_T_INT = 1  # True = la température intérieure est forcée à HR_T_INT_FORCED
 COIL_FORCE_T_EXT = 2  # True = la température extérieure est forcée à HR_T_EXT_FORCED
+COIL_EMERGENCY_STOP = 3  # True = bouton d'arrêt d'urgence enfoncé : arrêt de tous les ventilateurs
+COIL_ACK = 4  # Impulsion d'acquittement : le client écrit True, l'automate la remet à False
+COIL_FAN_FAULT_1 = 5  # Simulation (tests) : panne moteur de V1, il ne tourne plus même commandé
+COIL_FAN_FAULT_2 = 6
+COIL_FAN_FAULT_3 = 7
+COIL_FAN_FAULT_4 = 8
 COILS_START = COIL_SUMMER_MODE
-COILS_COUNT = 3
+COILS_COUNT = 9
 
 # --- Holding registers (lecture/écriture, valeurs de forçage) -----------------
 HR_T_INT_FORCED = 0  # °C x TEMPERATURE_SCALE, signé
@@ -32,7 +38,19 @@ HR_T_EXT_FORCED = 1  # °C x TEMPERATURE_SCALE, signé
 HR_FORCED_START = HR_T_INT_FORCED
 HR_FORCED_COUNT = 2
 
-# --- Discrete inputs (lecture seule, état des ventilateurs) -------------------
+# --- Holding registers (lecture/écriture, mode de conduite des ventilateurs) --
+HR_FAN_MODE_1 = 2  # FAN_MODE_AUTO / FAN_MODE_MANUAL_ON / FAN_MODE_MANUAL_OFF
+HR_FAN_MODE_2 = 3
+HR_FAN_MODE_3 = 4
+HR_FAN_MODE_4 = 5
+HR_FAN_MODES_START = HR_FAN_MODE_1
+HR_FAN_MODES_COUNT = 4
+
+FAN_MODE_AUTO = 0  # piloté par la logique de l'automate
+FAN_MODE_MANUAL_ON = 1  # marche forcée par l'opérateur
+FAN_MODE_MANUAL_OFF = 2  # arrêt forcé par l'opérateur
+
+# --- Discrete inputs (lecture seule, retour de marche des ventilateurs) -------
 # Contigus pour être lus en une seule requête FC2.
 DI_FAN_1 = 0  # Soufflage, seuil 23 °C été / 26 °C hiver
 DI_FAN_2 = 1  # Soufflage, seuil 24 °C été / 27 °C hiver
@@ -47,6 +65,33 @@ IR_T_INT = 0  # Température intérieure, °C x TEMPERATURE_SCALE, signé
 IR_T_EXT = 1  # Température extérieure, °C x TEMPERATURE_SCALE, signé
 IR_SENSORS_START = IR_T_INT
 IR_SENSORS_COUNT = 2
+
+# --- Input registers (lecture seule, mots d'alarmes) --------------------------
+# Bit n du mot = alarme ALARM_xxx de numéro n.
+IR_ALARMS_ACTIVE = 2  # bit à 1 = cause de l'alarme présente
+IR_ALARMS_LATCHED = 3  # bit à 1 = alarme mémorisée, en attente d'acquittement
+IR_ALARMS_START = IR_ALARMS_ACTIVE
+IR_ALARMS_COUNT = 2
+
+# --- Numéros de bit des alarmes dans les mots d'alarmes -----------------------
+ALARM_EMERGENCY_STOP = 0
+ALARM_T_INT_HIGH = 1
+ALARM_SENSOR_T_INT = 2
+ALARM_SENSOR_T_EXT = 3
+ALARM_FAN_1 = 4  # défaut de rotation (commandé mais sans retour de marche)
+ALARM_FAN_2 = 5
+ALARM_FAN_3 = 6
+ALARM_FAN_4 = 7
+ALARM_LABELS = [  # libellés affichés par l'IHM, dans l'ordre des bits
+    "Arrêt d'urgence",
+    "Température intérieure haute",
+    "Défaut capteur T_int",
+    "Défaut capteur T_ext",
+    "Défaut rotation V1",
+    "Défaut rotation V2",
+    "Défaut rotation V3",
+    "Défaut rotation V4",
+]
 
 TEMPERATURE_SCALE = 10
 

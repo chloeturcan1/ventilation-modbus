@@ -2,8 +2,10 @@
 //
 // - interroge l'automate toutes les POLL_MS et diffuse l'état aux pages ouvertes
 //   (Server-Sent Events sur /events) ;
-// - reçoit les commandes de la page (mode été/hiver, forçages) et les écrit
-//   dans les coils / holding registers de l'automate ;
+// - reçoit les commandes de la page (mode été/hiver, forçages, modes auto/manu,
+//   arrêt d'urgence, acquittement, pannes simulées) et les écrit dans les
+//   coils / holding registers de l'automate ;
+// - tient un journal horodaté des alarmes (apparition, disparition, acquittement) ;
 // - sert la page web (public/index.html).
 //
 // Toutes les requêtes Modbus passent par une file unique : le client
@@ -22,10 +24,19 @@ const POLL_MS = 500;
 const RECONNECT_MS = 2000;
 const T_MIN = -50;
 const T_MAX = 100;
+const JOURNAL_SIZE = 50;
+
+// Valeurs des registres de mode, et leur nom côté page.
+const FAN_MODES = { auto: mm.FAN_MODE_AUTO, on: mm.FAN_MODE_MANUAL_ON, off: mm.FAN_MODE_MANUAL_OFF };
+const FAN_MODE_NAMES = Object.fromEntries(Object.entries(FAN_MODES).map(([k, v]) => [v, k]));
+const FAN_MODE_REGISTERS = [mm.HR_FAN_MODE_1, mm.HR_FAN_MODE_2, mm.HR_FAN_MODE_3, mm.HR_FAN_MODE_4];
+const FAN_FAULT_COILS = [mm.COIL_FAN_FAULT_1, mm.COIL_FAN_FAULT_2, mm.COIL_FAN_FAULT_3, mm.COIL_FAN_FAULT_4];
 
 const client = new ModbusRTU();
 let state = { connected: false };
 const sseClients = new Set();
+const journal = []; // du plus récent au plus ancien
+let lastAlarms = null; // alarmes lues au dernier cycle, pour détecter les changements
 
 // --- File d'attente Modbus ----------------------------------------------------
 let queue = Promise.resolve();
@@ -62,7 +73,11 @@ async function readPlc() {
   const di = await client.readDiscreteInputs(mm.DI_FANS_START, mm.DI_FANS_COUNT);
   const co = await client.readCoils(mm.COILS_START, mm.COILS_COUNT);
   const hr = await client.readHoldingRegisters(mm.HR_FORCED_START, mm.HR_FORCED_COUNT);
+  const modes = await client.readHoldingRegisters(mm.HR_FAN_MODES_START, mm.HR_FAN_MODES_COUNT);
+  const al = await client.readInputRegisters(mm.IR_ALARMS_START, mm.IR_ALARMS_COUNT);
   const fanAddresses = [mm.DI_FAN_1, mm.DI_FAN_2, mm.DI_FAN_3, mm.DI_FAN_4];
+  const active = al.data[mm.IR_ALARMS_ACTIVE - mm.IR_ALARMS_START];
+  const latched = al.data[mm.IR_ALARMS_LATCHED - mm.IR_ALARMS_START];
   return {
     connected: true,
     t_int: fromRegister(ir.data[mm.IR_T_INT - mm.IR_SENSORS_START]),
@@ -73,13 +88,48 @@ async function readPlc() {
     force_ext: co.data[mm.COIL_FORCE_T_EXT - mm.COILS_START],
     forced_int: fromRegister(hr.data[mm.HR_T_INT_FORCED - mm.HR_FORCED_START]),
     forced_ext: fromRegister(hr.data[mm.HR_T_EXT_FORCED - mm.HR_FORCED_START]),
+    fan_modes: FAN_MODE_REGISTERS.map((a) => FAN_MODE_NAMES[modes.data[a - mm.HR_FAN_MODES_START]] || "auto"),
+    emergency_stop: co.data[mm.COIL_EMERGENCY_STOP - mm.COILS_START],
+    fan_faults: FAN_FAULT_COILS.map((a) => co.data[a - mm.COILS_START]),
+    // Verrouillages de sécurité, déduits des alarmes mémorisées.
+    emergency_lock: Boolean(latched & (1 << mm.ALARM_EMERGENCY_STOP)),
+    fan_defects: [mm.ALARM_FAN_1, mm.ALARM_FAN_2, mm.ALARM_FAN_3, mm.ALARM_FAN_4].map((bit) => Boolean(latched & (1 << bit))),
+    alarms: mm.ALARM_LABELS.map((label, bit) => ({
+      label,
+      active: Boolean(active & (1 << bit)),
+      latched: Boolean(latched & (1 << bit)),
+    })),
     time: Date.now(),
   };
+}
+
+// Compare les alarmes avec celles du cycle précédent et alimente le journal.
+function updateJournal(alarms, time) {
+  if (lastAlarms) {
+    alarms.forEach((a, i) => {
+      const before = lastAlarms[i];
+      let event = null;
+      // Une cause brève (ex. défaut de rotation, coupé dès le cycle suivant) peut
+      // passer entre deux lectures : sa mémorisation compte aussi comme apparition.
+      if ((a.active && !before.active) || (a.latched && !before.latched)) event = "apparition";
+      else if (!a.active && before.active) event = "disparition";
+      else if (!a.latched && before.latched) event = "acquittement";
+      if (event) journal.unshift({ time, label: a.label, event });
+    });
+    journal.length = Math.min(journal.length, JOURNAL_SIZE);
+  } else {
+    // Première lecture : on note les alarmes déjà présentes.
+    alarms.forEach((a) => {
+      if (a.active || a.latched) journal.unshift({ time, label: a.label, event: "présente au démarrage" });
+    });
+  }
+  lastAlarms = alarms;
 }
 
 async function poll() {
   try {
     state = await modbus(readPlc);
+    updateJournal(state.alarms, state.time);
     broadcast();
     setTimeout(poll, POLL_MS);
   } catch (err) {
@@ -102,6 +152,24 @@ async function setForce(coil, register, value) {
   });
 }
 
+async function setFanMode(fan, mode) {
+  await modbus(() => client.writeRegister(FAN_MODE_REGISTERS[fan - 1], FAN_MODES[mode]));
+}
+
+async function setCoil(coil, value) {
+  await modbus(() => client.writeCoil(coil, value));
+}
+
+function checkFan(fan) {
+  if (![1, 2, 3, 4].includes(fan)) throw new Error("'fan' doit valoir 1, 2, 3 ou 4");
+  return fan;
+}
+
+function checkBoolean(value, name) {
+  if (typeof value !== "boolean") throw new Error(`'${name}' doit etre true ou false`);
+  return value;
+}
+
 function checkTemperature(value) {
   if (value === null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value < T_MIN || value > T_MAX) {
@@ -111,8 +179,12 @@ function checkTemperature(value) {
 }
 
 // --- HTTP ---------------------------------------------------------------------
+function snapshot() {
+  return JSON.stringify({ ...state, journal });
+}
+
 function broadcast() {
-  const msg = `data: ${JSON.stringify(state)}\n\n`;
+  const msg = `data: ${snapshot()}\n\n`;
   for (const res of sseClients) res.write(msg);
 }
 
@@ -151,7 +223,7 @@ const server = http.createServer(async (req, res) => {
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
       });
-      res.write(`data: ${JSON.stringify(state)}\n\n`);
+      res.write(`data: ${snapshot()}\n\n`);
       sseClients.add(res);
       req.on("close", () => sseClients.delete(res));
     } else if (req.method === "POST" && req.url === "/api/mode") {
@@ -167,6 +239,22 @@ const server = http.createServer(async (req, res) => {
       if ("t_ext" in body) {
         await setForce(mm.COIL_FORCE_T_EXT, mm.HR_T_EXT_FORCED, checkTemperature(body.t_ext));
       }
+      sendJson(res, 200, { ok: true });
+    } else if (req.method === "POST" && req.url === "/api/fan-mode") {
+      const { fan, mode } = await readJson(req);
+      if (!(mode in FAN_MODES)) throw new Error("'mode' doit valoir auto, on ou off");
+      await setFanMode(checkFan(fan), mode);
+      sendJson(res, 200, { ok: true });
+    } else if (req.method === "POST" && req.url === "/api/emergency-stop") {
+      const { pressed } = await readJson(req);
+      await setCoil(mm.COIL_EMERGENCY_STOP, checkBoolean(pressed, "pressed"));
+      sendJson(res, 200, { ok: true });
+    } else if (req.method === "POST" && req.url === "/api/ack") {
+      await setCoil(mm.COIL_ACK, true); // impulsion remise à false par l'automate
+      sendJson(res, 200, { ok: true });
+    } else if (req.method === "POST" && req.url === "/api/fan-fault") {
+      const { fan, fault } = await readJson(req);
+      await setCoil(FAN_FAULT_COILS[checkFan(fan) - 1], checkBoolean(fault, "fault"));
       sendJson(res, 200, { ok: true });
     } else {
       sendJson(res, 404, { ok: false, error: "introuvable" });

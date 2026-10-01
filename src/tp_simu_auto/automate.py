@@ -21,10 +21,26 @@ Logique (avec hystérésis pour éviter les battements autour des seuils) :
 - V4 (monté à l'envers, extraction) : marche seulement si T_int > T_ext,
   et en hiver seulement si de plus T_int > 28 °C ;
   arrêt quand T_int < T_ext - hystérésis (ou, en hiver, T_int < 28 - hystérésis).
+
+Conduite et sécurités, appliquées par ordre de priorité décroissante :
+
+1. arrêt d'urgence : tous les ventilateurs s'arrêtent, même en manuel ; après
+   relâchement du bouton, rien ne redémarre avant un acquittement (réarmement) ;
+2. défaut de rotation : un ventilateur commandé mais sans retour de marche
+   pendant fan_feedback_delay_s est verrouillé à l'arrêt jusqu'à acquittement ;
+3. mode manuel (marche forcée / arrêt forcé), réglable ventilateur par
+   ventilateur ;
+4. logique automatique ci-dessus, en mode dégradé si un capteur est hors de sa
+   plage de mesure : sans T_int, seul V1 tourne (renouvellement d'air minimal) ;
+   sans T_ext, V4 s'arrête (impossible de comparer intérieur et extérieur).
+
+Chaque alarme est mémorisée dès que sa cause apparaît ; l'acquittement efface
+les alarmes mémorisées dont la cause a disparu.
 """
 
 import math
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
 
 def _with_hysteresis(on: bool, value: float, threshold: float, hysteresis: float) -> bool:
@@ -32,6 +48,26 @@ def _with_hysteresis(on: bool, value: float, threshold: float, hysteresis: float
     if on:
         return value >= threshold - hysteresis
     return value >= threshold
+
+
+class FanMode(Enum):
+    AUTO = auto()
+    MANUAL_ON = auto()
+    MANUAL_OFF = auto()
+
+
+class Alarm(Enum):
+    EMERGENCY_STOP = auto()
+    T_INT_HIGH = auto()
+    SENSOR_T_INT = auto()
+    SENSOR_T_EXT = auto()
+    FAN_1 = auto()
+    FAN_2 = auto()
+    FAN_3 = auto()
+    FAN_4 = auto()
+
+
+FAN_ALARMS = (Alarm.FAN_1, Alarm.FAN_2, Alarm.FAN_3, Alarm.FAN_4)
 
 
 @dataclass
@@ -42,15 +78,33 @@ class Automate:
     summer_mode: bool = True
     t_int_forced: float | None = None  # None = valeur simulée
     t_ext_forced: float | None = None
+    fan_modes: list[FanMode] = field(default_factory=lambda: [FanMode.AUTO] * 4)
+    emergency_stop: bool = False  # bouton d'arrêt d'urgence enfoncé
+    fan_faults: list[bool] = field(default_factory=lambda: [False] * 4)  # pannes simulées
 
-    # Sorties : état des ventilateurs V1..V4
+    # Ventilateurs V1..V4 : demande de la logique automatique, commande réellement
+    # envoyée (après modes et sécurités) et retour de marche (rotation constatée)
+    auto_fans: list[bool] = field(default_factory=lambda: [False] * 4)
+    fan_commands: list[bool] = field(default_factory=lambda: [False] * 4)
     fans: list[bool] = field(default_factory=lambda: [False] * 4)
+
+    # Alarmes : cause présente / mémorisée en attente d'acquittement
+    alarms_active: set[Alarm] = field(default_factory=set)
+    alarms_latched: set[Alarm] = field(default_factory=set)
 
     # Logique
     summer_fan_thresholds: tuple[float, float, float] = (23.0, 24.0, 25.0)
     winter_fan_thresholds: tuple[float, float, float] = (26.0, 27.0, 28.0)
     winter_extract_threshold: float = 28.0  # V4 en hiver : T_int doit dépasser ce seuil
     hysteresis: float = 0.5
+
+    # Sécurités
+    t_int_high_alarm: float = 35.0
+    sensor_min: float = -40.0  # plage de mesure des capteurs : hors plage = défaut capteur
+    sensor_max: float = 80.0
+    fan_feedback_delay_s: float = 2.0  # délai toléré entre commande et retour de marche
+    _stalled_s: list[float] = field(default_factory=lambda: [0.0] * 4, repr=False)
+    _ack_requested: bool = field(default=False, repr=False)
 
     # Mesures (°C)
     t_int: float = 22.0
@@ -71,10 +125,24 @@ class Automate:
     fan_exchange: float = 0.02  # échange d'air apporté par chaque ventilateur
 
     def step(self, dt: float) -> None:
-        """Avance la simulation de dt secondes, puis recalcule les ventilateurs."""
+        """Avance la simulation de dt secondes, puis recalcule alarmes et ventilateurs."""
         self.clock_s += dt
         self._update_temperatures(dt)
-        self._update_fans()
+        t_int_ok = self.sensor_min <= self.t_int <= self.sensor_max
+        t_ext_ok = self.sensor_min <= self.t_ext <= self.sensor_max
+        self._update_alarms(dt, t_int_ok, t_ext_ok)
+        if self._ack_requested:
+            # Traité après le calcul des alarmes : un défaut qui disparaît dans ce
+            # même cycle est bien acquitté.
+            self.alarms_latched &= self.alarms_active
+            self._ack_requested = False
+        self._update_auto_fans(t_int_ok, t_ext_ok)
+        self._update_fan_commands()
+
+    def acknowledge(self) -> None:
+        """Demande d'acquittement : au prochain step(), efface les alarmes
+        mémorisées dont la cause a disparu."""
+        self._ack_requested = True
 
     def _update_temperatures(self, dt: float) -> None:
         if self.t_ext_forced is not None:
@@ -94,19 +162,50 @@ class Automate:
             exchange = self.wall_exchange + self.fan_exchange * sum(self.fans)
             self.t_int += (gain - exchange * (self.t_int - self.t_ext)) * dt
 
-    def _update_fans(self) -> None:
+    def _update_alarms(self, dt: float, t_int_ok: bool, t_ext_ok: bool) -> None:
+        # Défaut de rotation : commandé au cycle précédent mais toujours à l'arrêt.
+        for i, (command, running) in enumerate(zip(self.fan_commands, self.fans)):
+            self._stalled_s[i] = self._stalled_s[i] + dt if command and not running else 0.0
+
+        t_int_high = _with_hysteresis(
+            Alarm.T_INT_HIGH in self.alarms_active,
+            self.t_int,
+            self.t_int_high_alarm,
+            self.hysteresis,
+        )
+        causes = {
+            Alarm.EMERGENCY_STOP: self.emergency_stop,
+            # Une mesure hors plage n'a pas de sens : pas d'alarme haute sur capteur HS.
+            Alarm.T_INT_HIGH: t_int_ok and t_int_high,
+            Alarm.SENSOR_T_INT: not t_int_ok,
+            Alarm.SENSOR_T_EXT: not t_ext_ok,
+        }
+        for alarm, stalled in zip(FAN_ALARMS, self._stalled_s):
+            causes[alarm] = stalled >= self.fan_feedback_delay_s
+        self.alarms_active = {alarm for alarm, present in causes.items() if present}
+        self.alarms_latched |= self.alarms_active
+
+    def _update_auto_fans(self, t_int_ok: bool, t_ext_ok: bool) -> None:
+        if not t_int_ok:
+            # Mode dégradé : sans mesure intérieure, V1 assure un renouvellement d'air minimal.
+            self.auto_fans = [True, False, False, False]
+            return
+
         thresholds = (
             self.summer_fan_thresholds if self.summer_mode else self.winter_fan_thresholds
         )
         new = [
             _with_hysteresis(on, self.t_int, threshold, self.hysteresis)
-            for on, threshold in zip(self.fans[:3], thresholds)
+            for on, threshold in zip(self.auto_fans[:3], thresholds)
         ]
 
         # V4 : marche seulement si T_int > T_ext (strict : à égalité, extraire ne sert
         # à rien) ; en hiver, il faut en plus T_int > 28 °C (strict aussi).
+        # Sans mesure extérieure, la comparaison est impossible : V4 reste à l'arrêt.
         delta = self.t_int - self.t_ext
-        if self.fans[3]:
+        if not t_ext_ok:
+            v4 = False
+        elif self.auto_fans[3]:
             v4 = delta >= -self.hysteresis and (
                 self.summer_mode
                 or self.t_int >= self.winter_extract_threshold - self.hysteresis
@@ -116,4 +215,20 @@ class Automate:
                 self.summer_mode or self.t_int > self.winter_extract_threshold
             )
         new.append(v4)
-        self.fans = new
+        self.auto_fans = new
+
+    def _update_fan_commands(self) -> None:
+        emergency = Alarm.EMERGENCY_STOP in self.alarms_latched
+        commands = []
+        for mode, auto_on, alarm in zip(self.fan_modes, self.auto_fans, FAN_ALARMS):
+            if emergency or alarm in self.alarms_latched:
+                commands.append(False)
+            elif mode is FanMode.MANUAL_ON:
+                commands.append(True)
+            elif mode is FanMode.MANUAL_OFF:
+                commands.append(False)
+            else:
+                commands.append(auto_on)
+        self.fan_commands = commands
+        # Retour de marche : un ventilateur en panne ne tourne pas, même commandé.
+        self.fans = [on and not fault for on, fault in zip(commands, self.fan_faults)]
