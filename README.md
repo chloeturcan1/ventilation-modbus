@@ -224,3 +224,18 @@ Pour tout arrêter : **Ctrl+C** dans chaque terminal.
 
 > Sous Linux, le port 502 est réservé à l'administrateur : lancer l'automate
 > avec `sudo`, ou changer `PORT` dans `modbus_map.py`.
+
+### Projet dans un dossier synchronisé iCloud (macOS)
+
+Si `uv run server.py` affiche `ModuleNotFoundError: No module named
+'tp_simu_auto'` alors que le projet est dans Documents ou Bureau synchronisés
+avec iCloud, c'est qu'iCloud marque comme « cachés » les fichiers `.pth` de
+l'environnement virtuel, que Python 3.13 ignore alors. La solution est de
+placer l'environnement dans un dossier `.nosync`, qu'iCloud ne synchronise pas :
+
+```bash
+rm -rf .venv
+mkdir .venv.nosync
+ln -s .venv.nosync .venv
+uv sync
+```
