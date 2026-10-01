@@ -122,6 +122,63 @@ Comme un vrai API, le programme tourne en boucle toutes les **0,2 s** :
 3. écriture des sorties Modbus (températures, mots d'alarmes, état des
    ventilateurs).
 
+## Accès opérateur / administrateur
+
+Tout le monde peut **consulter** l'IHM. Les commandes demandent de se connecter
+(bouton **Se connecter** en haut de la page), avec un niveau d'accès minimal :
+
+| Commande | Sans connexion | Opérateur | Administrateur |
+|---|:---:|:---:|:---:|
+| Consulter températures, ventilateurs, alarmes, journal | ✓ | ✓ | ✓ |
+| Arrêt d'urgence (enfoncer / relâcher) | ✓ | ✓ | ✓ |
+| Acquitter les alarmes (réarmement) | | ✓ | ✓ |
+| Mode été / hiver, modes auto / marche / arrêt | | ✓ | ✓ |
+| Exporter le rapport d'alarmes en PDF | | ✓ | ✓ |
+| Forcer les températures, simuler des pannes (tests) | | | ✓ |
+
+L'**arrêt d'urgence** reste accessible sans connexion : une sécurité ne doit
+jamais être bloquée par un mot de passe. Le relâcher ne relance rien, puisque
+le réarmement passe par l'acquittement, réservé aux utilisateurs connectés.
+
+Comptes par défaut :
+
+| Identifiant | Mot de passe | Niveau |
+|---|---|---|
+| `operateur` | `operateur` | opérateur |
+| `admin` | `admin` | administrateur |
+
+Pour changer les mots de passe, lance l'IHM avec des variables d'environnement :
+
+```bash
+IHM_OPERATOR_PASSWORD=monmotdepasse IHM_ADMIN_PASSWORD=autremotdepasse npm start
+```
+
+Le serveur de l'IHM vérifie lui-même le niveau d'accès de chaque commande : les
+boutons grisés sur la page ne sont qu'une aide visuelle. Une session dure 8 h
+et se perd au redémarrage de l'IHM. Chaque action (connexion, acquittement,
+changement de mode, forçage…) est inscrite dans le journal avec le nom de
+l'utilisateur, ou « non connecté » pour l'arrêt d'urgence.
+
+Comme sur une vraie installation, la protection porte sur l'IHM : le protocole
+Modbus n'a pas d'authentification, et `client.py` parle directement à
+l'automate.
+
+## Rapport d'alarmes en PDF
+
+Le bouton **Exporter en PDF**, au-dessus du journal, télécharge un rapport
+`rapport-alarmes_<date>.pdf` qui contient :
+
+- la date de l'export, l'utilisateur qui l'a demandé et la période couverte
+  (depuis le démarrage de l'IHM) ;
+- l'état de l'installation à ce moment : mode, températures, arrêt d'urgence,
+  marche et mode de chaque ventilateur ;
+- l'état actuel de chaque alarme et son nombre d'apparitions sur la période ;
+- le journal complet dans l'ordre chronologique : alarmes et actions des
+  utilisateurs.
+
+L'IHM garde en mémoire les 500 derniers événements, remis à zéro à chaque
+redémarrage de l'IHM.
+
 ## Table d'échange Modbus
 
 Automate : unit id **1**, port **502**. Toutes les adresses sont définies à un
@@ -162,7 +219,8 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 ├── server.py             # l'automate : serveur Modbus TCP + cycle de 0,2 s
 ├── client.py             # client de test automatique (seuils, conduite, sécurités)
 ├── ihm/
-│   ├── server.js         # serveur de l'IHM : passerelle Modbus <-> navigateur
+│   ├── server.js         # serveur de l'IHM : passerelle Modbus <-> navigateur, accès, journal
+│   ├── report.js         # génération du rapport d'alarmes en PDF
 │   ├── modbus_map.js     # relit les adresses dans modbus_map.py
 │   └── public/index.html # la page de supervision
 └── pyproject.toml, uv.lock, ihm/package.json   # dépendances
@@ -171,7 +229,7 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 Technologies : **Python 3.13** avec [uv](https://docs.astral.sh/uv/) et
 [pymodbus](https://pymodbus.readthedocs.io/) 3.15 pour l'automate ;
 **Node.js** avec [modbus-serial](https://www.npmjs.com/package/modbus-serial)
-pour l'IHM.
+et [PDFKit](https://pdfkit.org/) pour l'IHM.
 
 ## Tester le projet
 
@@ -218,7 +276,9 @@ npm start
 Ouvre ensuite **http://localhost:3000** dans ton navigateur : températures en
 direct, état des 4 ventilateurs avec leur mode auto / marche / arrêt, bouton
 été/hiver, arrêt d'urgence, alarmes et journal, forçage des températures et
-simulation de pannes.
+simulation de pannes. Connecte-toi avec un des comptes de la partie
+[Accès opérateur / administrateur](#accès-opérateur--administrateur) pour
+utiliser les commandes.
 
 **Terminal 3 — test automatique** (facultatif) :
 

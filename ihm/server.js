@@ -5,26 +5,40 @@
 // - reçoit les commandes de la page (mode été/hiver, forçages, modes auto/manu,
 //   arrêt d'urgence, acquittement, pannes simulées) et les écrit dans les
 //   coils / holding registers de l'automate ;
-// - tient un journal horodaté des alarmes (apparition, disparition, acquittement) ;
+// - gère l'accès opérateur / administrateur : la supervision est visible sans
+//   connexion, mais chaque commande demande un niveau d'accès minimal ;
+// - tient un journal horodaté des alarmes (apparition, disparition, acquittement)
+//   et des actions des utilisateurs, exportable en rapport PDF ;
 // - sert la page web (public/index.html).
 //
 // Toutes les requêtes Modbus passent par une file unique : le client
 // modbus-serial ne doit traiter qu'une transaction à la fois.
 
 const http = require("node:http");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const ModbusRTU = require("modbus-serial");
 const { map: mm, toRegister, fromRegister } = require("./modbus_map");
+const { writeReport } = require("./report");
 
 const PLC_HOST = process.env.PLC_HOST || "127.0.0.1";
-const HTTP_HOST = process.env.IHM_HOST || "127.0.0.1"; // pas d'authentification : local uniquement
+const HTTP_HOST = process.env.IHM_HOST || "127.0.0.1"; // pas de HTTPS : local uniquement
 const HTTP_PORT = Number(process.env.IHM_PORT || 3000);
 const POLL_MS = 500;
 const RECONNECT_MS = 2000;
 const T_MIN = -50;
 const T_MAX = 100;
-const JOURNAL_SIZE = 50;
+const JOURNAL_SIZE = 500;
+const SESSION_MS = 8 * 3600 * 1000; // une session dure le temps d'un poste de travail
+
+// Comptes de l'IHM. Mots de passe par défaut à changer via les variables
+// d'environnement IHM_OPERATOR_PASSWORD et IHM_ADMIN_PASSWORD.
+const USERS = {
+  operateur: { role: "operator", password: process.env.IHM_OPERATOR_PASSWORD || "operateur" },
+  admin: { role: "admin", password: process.env.IHM_ADMIN_PASSWORD || "admin" },
+};
+const ROLE_LEVELS = { operator: 1, admin: 2 };
 
 // Valeurs des registres de mode, et leur nom côté page.
 const FAN_MODES = { auto: mm.FAN_MODE_AUTO, on: mm.FAN_MODE_MANUAL_ON, off: mm.FAN_MODE_MANUAL_OFF };
@@ -36,6 +50,8 @@ const client = new ModbusRTU();
 let state = { connected: false };
 const sseClients = new Set();
 const journal = []; // du plus récent au plus ancien
+const startedAt = Date.now();
+const sessions = new Map(); // jeton -> { name, role, expires }
 let lastAlarms = null; // alarmes lues au dernier cycle, pour détecter les changements
 
 // --- File d'attente Modbus ----------------------------------------------------
@@ -114,16 +130,26 @@ function updateJournal(alarms, time) {
       if ((a.active && !before.active) || (a.latched && !before.latched)) event = "apparition";
       else if (!a.active && before.active) event = "disparition";
       else if (!a.latched && before.latched) event = "acquittement";
-      if (event) journal.unshift({ time, label: a.label, event });
+      if (event) addJournal({ time, label: a.label, event });
     });
-    journal.length = Math.min(journal.length, JOURNAL_SIZE);
   } else {
     // Première lecture : on note les alarmes déjà présentes.
     alarms.forEach((a) => {
-      if (a.active || a.latched) journal.unshift({ time, label: a.label, event: "présente au démarrage" });
+      if (a.active || a.latched) addJournal({ time, label: a.label, event: "présente au démarrage" });
     });
   }
   lastAlarms = alarms;
+}
+
+function addJournal(entry) {
+  journal.unshift(entry);
+  journal.length = Math.min(journal.length, JOURNAL_SIZE);
+}
+
+// Trace une action d'un utilisateur dans le journal.
+function logAction(user, label) {
+  addJournal({ time: Date.now(), label, event: "action", user: user ? user.name : "non connecté" });
+  broadcast();
 }
 
 async function poll() {
@@ -178,6 +204,70 @@ function checkTemperature(value) {
   return value;
 }
 
+// --- Accès opérateur / administrateur -----------------------------------------
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Comparaison en temps constant, pour ne rien révéler du mot de passe.
+function samePassword(a, b) {
+  const hash = (s) => crypto.createHash("sha256").update(String(s)).digest();
+  return crypto.timingSafeEqual(hash(a), hash(b));
+}
+
+function readCookie(req, name) {
+  const cookies = (req.headers.cookie || "").split(";").map((c) => c.trim().split("="));
+  const found = cookies.find(([k]) => k === name);
+  return found ? decodeURIComponent(found[1] || "") : null;
+}
+
+function currentUser(req) {
+  const token = readCookie(req, "ihm_session");
+  const session = token && sessions.get(token);
+  if (!session) return null;
+  if (session.expires < Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+// Renvoie l'utilisateur connecté s'il a au moins le niveau demandé.
+function requireRole(req, role) {
+  const user = currentUser(req);
+  if (!user) throw new HttpError(401, "connexion requise");
+  if (ROLE_LEVELS[user.role] < ROLE_LEVELS[role]) {
+    throw new HttpError(403, role === "admin" ? "commande réservée à l'administrateur" : "accès insuffisant");
+  }
+  return user;
+}
+
+function login(res, username, password) {
+  const account = Object.hasOwn(USERS, username) ? USERS[username] : null;
+  // On compare même si le compte n'existe pas, pour ne pas révéler les identifiants valides.
+  const ok = samePassword(password, account ? account.password : crypto.randomUUID()) && account;
+  if (!ok) throw new HttpError(401, "identifiant ou mot de passe incorrect");
+  const token = crypto.randomBytes(32).toString("hex");
+  const user = { name: username, role: account.role, expires: Date.now() + SESSION_MS };
+  sessions.set(token, user);
+  res.setHeader("Set-Cookie", `ihm_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`);
+  return user;
+}
+
+function logout(req, res) {
+  const token = readCookie(req, "ihm_session");
+  if (token) sessions.delete(token);
+  res.setHeader("Set-Cookie", "ihm_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+}
+
+const sessionInfo = (user) => (user ? { name: user.name, role: user.role } : null);
+
+const FAN_MODE_LABELS = { auto: "auto", on: "manuel marche", off: "manuel arrêt" };
+const describeForce = (name, value) => (value === null ? `Forçage ${name} relâché` : `Forçage ${name} à ${value.toFixed(1)} °C`);
+
 // --- HTTP ---------------------------------------------------------------------
 function snapshot() {
   return JSON.stringify({ ...state, journal });
@@ -226,41 +316,77 @@ const server = http.createServer(async (req, res) => {
       res.write(`data: ${snapshot()}\n\n`);
       sseClients.add(res);
       req.on("close", () => sseClients.delete(res));
+    } else if (req.method === "GET" && req.url === "/api/session") {
+      sendJson(res, 200, { ok: true, user: sessionInfo(currentUser(req)) });
+    } else if (req.method === "POST" && req.url === "/api/login") {
+      const { username, password } = await readJson(req);
+      const user = login(res, String(username || ""), String(password || ""));
+      logAction(user, "Connexion");
+      sendJson(res, 200, { ok: true, user: sessionInfo(user) });
+    } else if (req.method === "POST" && req.url === "/api/logout") {
+      const user = currentUser(req);
+      logout(req, res);
+      if (user) logAction(user, "Déconnexion");
+      sendJson(res, 200, { ok: true });
     } else if (req.method === "POST" && req.url === "/api/mode") {
+      const user = requireRole(req, "operator");
       const { summer } = await readJson(req);
       if (typeof summer !== "boolean") throw new Error("'summer' doit etre true ou false");
       await setMode(summer);
+      logAction(user, summer ? "Passage en mode été" : "Passage en mode hiver");
       sendJson(res, 200, { ok: true });
     } else if (req.method === "POST" && req.url === "/api/force") {
+      const user = requireRole(req, "admin");
       const body = await readJson(req);
       if ("t_int" in body) {
-        await setForce(mm.COIL_FORCE_T_INT, mm.HR_T_INT_FORCED, checkTemperature(body.t_int));
+        const value = checkTemperature(body.t_int);
+        await setForce(mm.COIL_FORCE_T_INT, mm.HR_T_INT_FORCED, value);
+        logAction(user, describeForce("T_int", value));
       }
       if ("t_ext" in body) {
-        await setForce(mm.COIL_FORCE_T_EXT, mm.HR_T_EXT_FORCED, checkTemperature(body.t_ext));
+        const value = checkTemperature(body.t_ext);
+        await setForce(mm.COIL_FORCE_T_EXT, mm.HR_T_EXT_FORCED, value);
+        logAction(user, describeForce("T_ext", value));
       }
       sendJson(res, 200, { ok: true });
     } else if (req.method === "POST" && req.url === "/api/fan-mode") {
+      const user = requireRole(req, "operator");
       const { fan, mode } = await readJson(req);
       if (!(mode in FAN_MODES)) throw new Error("'mode' doit valoir auto, on ou off");
       await setFanMode(checkFan(fan), mode);
+      logAction(user, `V${fan} en mode ${FAN_MODE_LABELS[mode]}`);
       sendJson(res, 200, { ok: true });
     } else if (req.method === "POST" && req.url === "/api/emergency-stop") {
+      // Accessible sans connexion : un arrêt d'urgence ne doit jamais être bloqué.
+      // Le relâcher ne relance rien : le réarmement passe par l'acquittement.
       const { pressed } = await readJson(req);
       await setCoil(mm.COIL_EMERGENCY_STOP, checkBoolean(pressed, "pressed"));
+      logAction(currentUser(req), pressed ? "Arrêt d'urgence enfoncé" : "Arrêt d'urgence relâché");
       sendJson(res, 200, { ok: true });
     } else if (req.method === "POST" && req.url === "/api/ack") {
+      const user = requireRole(req, "operator");
       await setCoil(mm.COIL_ACK, true); // impulsion remise à false par l'automate
+      logAction(user, "Acquittement demandé");
       sendJson(res, 200, { ok: true });
     } else if (req.method === "POST" && req.url === "/api/fan-fault") {
+      const user = requireRole(req, "admin");
       const { fan, fault } = await readJson(req);
       await setCoil(FAN_FAULT_COILS[checkFan(fan) - 1], checkBoolean(fault, "fault"));
+      logAction(user, `Panne simulée V${fan} ${fault ? "activée" : "retirée"}`);
       sendJson(res, 200, { ok: true });
+    } else if (req.method === "GET" && req.url === "/api/report.pdf") {
+      const user = requireRole(req, "operator");
+      const stamp = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "h");
+      res.writeHead(200, {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="rapport-alarmes_${stamp}.pdf"`,
+      });
+      writeReport(res, { state, journal, startedAt, user, journalSize: JOURNAL_SIZE });
     } else {
       sendJson(res, 404, { ok: false, error: "introuvable" });
     }
   } catch (err) {
-    sendJson(res, 400, { ok: false, error: err.message });
+    sendJson(res, err.status || 400, { ok: false, error: err.message });
   }
 });
 

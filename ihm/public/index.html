@@ -177,6 +177,31 @@
   .faults { display: flex; flex-wrap: wrap; gap: 8px 18px; }
   .faults label { flex: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
   .faults input { width: auto; margin: 0; }
+  .journal .ev-action { color: var(--accent); }
+
+  /* --- Accès opérateur / administrateur --- */
+  .user { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; }
+  .user .who { color: var(--muted); }
+  .user .who strong { color: var(--text); }
+  .seg button:disabled, .mode button:disabled, .faults input:disabled { cursor: default; }
+  .faults label:has(input:disabled) { cursor: default; opacity: .6; }
+  .locked-hint { color: var(--muted); font-size: 13px; margin: -4px 0 8px; }
+  .locked-hint[hidden] { display: none; }
+  .alarm-head .actions { display: flex; gap: 8px; }
+  dialog {
+    border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; width: min(360px, calc(100% - 32px));
+    background: var(--panel); color: var(--text);
+  }
+  dialog::backdrop { background: rgb(0 0 0 / .45); }
+  dialog h2 { margin-bottom: 14px; }
+  dialog label { display: block; font-weight: 600; font-size: 13px; margin: 10px 0 4px; }
+  dialog input {
+    width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  #login-error { color: var(--err); font-size: 13px; font-weight: 600; margin-top: 10px; }
+  #login-error:empty { display: none; }
 </style>
 </head>
 <body>
@@ -185,15 +210,20 @@
     <h1>Ventilation &mdash; supervision</h1>
     <span id="status" class="pill ko">Connexion...</span>
     <div class="mode" role="group" aria-label="Mode de fonctionnement">
-      <button class="summer" data-summer="true" aria-pressed="false">Été</button>
-      <button class="winter" data-summer="false" aria-pressed="false">Hiver</button>
+      <button class="summer" data-summer="true" aria-pressed="false" data-need="operator">Été</button>
+      <button class="winter" data-summer="false" aria-pressed="false" data-need="operator">Hiver</button>
     </div>
     <button class="estop" id="estop" aria-pressed="false">ARRÊT D'URGENCE</button>
+    <div class="user">
+      <span class="who" id="who">Consultation seule</span>
+      <button class="btn" id="login-btn">Se connecter</button>
+      <button class="btn" id="logout-btn" hidden>Déconnexion</button>
+    </div>
   </header>
 
   <div class="banner" id="banner" role="status" hidden>
     <span id="banner-text"></span>
-    <button class="btn" data-ack>Acquitter</button>
+    <button class="btn" data-ack data-need="operator">Acquitter</button>
   </div>
 
   <section class="grid temps">
@@ -222,12 +252,15 @@
     <div class="card">
       <div class="alarm-head">
         <h2>Alarmes</h2>
-        <button class="btn" data-ack>Acquitter</button>
+        <button class="btn" data-ack data-need="operator">Acquitter</button>
       </div>
       <ul class="alarm-list" id="alarm-list"></ul>
     </div>
     <div class="card">
-      <div class="alarm-head"><h2>Journal</h2></div>
+      <div class="alarm-head">
+        <h2>Journal</h2>
+        <button class="btn" id="export-pdf" data-need="operator">Exporter en PDF</button>
+      </div>
       <ul class="journal" id="journal"></ul>
       <div class="empty" id="journal-empty">Aucun événement depuis le démarrage de l'IHM.</div>
     </div>
@@ -235,17 +268,18 @@
 
   <section class="card">
     <h2>Forçage des températures (tests)</h2>
+    <p class="locked-hint" id="admin-hint">Réservé à l'administrateur.</p>
     <div class="force-row">
       <label for="in-int">Intérieur T_int (°C)</label>
-      <input id="in-int" type="number" step="0.1" min="-50" max="100" value="24.0">
-      <button class="btn primary" data-force="t_int">Forcer</button>
-      <button class="btn" data-release="t_int">Relâcher</button>
+      <input id="in-int" type="number" step="0.1" min="-50" max="100" value="24.0" data-need="admin">
+      <button class="btn primary" data-force="t_int" data-need="admin">Forcer</button>
+      <button class="btn" data-release="t_int" data-need="admin">Relâcher</button>
     </div>
     <div class="force-row">
       <label for="in-ext">Extérieur T_ext (°C)</label>
-      <input id="in-ext" type="number" step="0.1" min="-50" max="100" value="20.0">
-      <button class="btn primary" data-force="t_ext">Forcer</button>
-      <button class="btn" data-release="t_ext">Relâcher</button>
+      <input id="in-ext" type="number" step="0.1" min="-50" max="100" value="20.0" data-need="admin">
+      <button class="btn primary" data-force="t_ext" data-need="admin">Forcer</button>
+      <button class="btn" data-release="t_ext" data-need="admin">Relâcher</button>
     </div>
     <div class="force-row">
       <label>Pannes moteur simulées</label>
@@ -254,6 +288,21 @@
     <div id="error" role="alert"></div>
   </section>
 </div>
+
+<dialog id="login-dialog">
+  <form id="login-form">
+    <h2>Connexion</h2>
+    <label for="login-user">Identifiant</label>
+    <input id="login-user" autocomplete="username" required>
+    <label for="login-pass">Mot de passe</label>
+    <input id="login-pass" type="password" autocomplete="current-password" required>
+    <div id="login-error" role="alert"></div>
+    <div class="dialog-actions">
+      <button class="btn" type="button" id="login-cancel">Annuler</button>
+      <button class="btn primary" type="submit">Se connecter</button>
+    </div>
+  </form>
+</dialog>
 
 <template id="fan-tpl">
   <div class="card fan">
@@ -274,9 +323,9 @@
     </div>
     </div>
     <div class="seg" role="group" aria-label="Mode de conduite">
-      <button data-mode="auto" aria-pressed="true">Auto</button>
-      <button data-mode="on" aria-pressed="false">Marche</button>
-      <button data-mode="off" aria-pressed="false">Arrêt</button>
+      <button data-mode="auto" aria-pressed="true" data-need="operator">Auto</button>
+      <button data-mode="on" aria-pressed="false" data-need="operator">Marche</button>
+      <button data-mode="off" aria-pressed="false" data-need="operator">Arrêt</button>
     </div>
   </div>
 </template>
@@ -303,7 +352,7 @@
     $("fans").appendChild(el);
 
     const fault = document.createElement("label");
-    fault.innerHTML = `<input type="checkbox"> ${name}`;
+    fault.innerHTML = `<input type="checkbox" data-need="admin"> ${name}`;
     fault.querySelector("input").addEventListener("change", (e) =>
       post("/api/fan-fault", { fan: i + 1, fault: e.target.checked })
     );
@@ -357,7 +406,7 @@
         li.innerHTML = `<time></time><span></span>`;
         li.querySelector("time").textContent = timeFmt.format(e.time);
         const text = li.querySelector("span");
-        text.textContent = `${e.label} — ${e.event}`;
+        text.textContent = e.event === "action" ? `${e.label} (${e.user})` : `${e.label} — ${e.event}`;
         text.className = "ev-" + e.event;
         return li;
       })
@@ -448,6 +497,59 @@
     }
   }
 
+  // --- Accès opérateur / administrateur ---
+  // La page grise les commandes hors de portée ; le serveur refuse de toute façon
+  // une commande envoyée sans le niveau d'accès requis.
+  const ROLE_LEVELS = { operator: 1, admin: 2 };
+  const ROLE_NAMES = { operator: "opérateur", admin: "administrateur" };
+
+  function applySession(user) {
+    const level = user ? ROLE_LEVELS[user.role] : 0;
+    document.querySelectorAll("[data-need]").forEach((el) => {
+      el.disabled = level < ROLE_LEVELS[el.dataset.need];
+    });
+    $("who").innerHTML = user ? `<strong></strong> · ${ROLE_NAMES[user.role]}` : "Consultation seule";
+    if (user) $("who").querySelector("strong").textContent = user.name;
+    $("login-btn").hidden = Boolean(user);
+    $("logout-btn").hidden = !user;
+    $("admin-hint").hidden = level >= ROLE_LEVELS.admin;
+  }
+
+  async function refreshSession() {
+    try {
+      const data = await (await fetch("/api/session")).json();
+      applySession(data.user);
+    } catch {
+      applySession(null);
+    }
+  }
+
+  $("login-btn").addEventListener("click", () => {
+    $("login-error").textContent = "";
+    $("login-form").reset();
+    $("login-dialog").showModal();
+  });
+  $("login-cancel").addEventListener("click", () => $("login-dialog").close());
+  $("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("login-user").value.trim(), password: $("login-pass").value }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      $("login-error").textContent = data.error;
+      return;
+    }
+    $("login-dialog").close();
+    applySession(data.user);
+  });
+  $("logout-btn").addEventListener("click", async () => {
+    await fetch("/api/logout", { method: "POST" });
+    applySession(null);
+  });
+
   // --- Envoi des commandes ---
   async function post(url, body) {
     $("error").textContent = "";
@@ -458,11 +560,31 @@
         body: JSON.stringify(body),
       });
       const data = await res.json();
+      if (res.status === 401) refreshSession(); // session expirée ou serveur IHM redémarré
       if (!data.ok) throw new Error(data.error);
     } catch (err) {
       $("error").textContent = "Commande refusée : " + err.message;
     }
   }
+
+  // Le rapport est téléchargé via fetch pour pouvoir afficher une erreur éventuelle.
+  $("export-pdf").addEventListener("click", async () => {
+    $("error").textContent = "";
+    try {
+      const res = await fetch("/api/report.pdf");
+      if (!res.ok) {
+        if (res.status === 401) refreshSession();
+        throw new Error((await res.json()).error);
+      }
+      const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1] || "rapport-alarmes.pdf";
+      const url = URL.createObjectURL(await res.blob());
+      const a = Object.assign(document.createElement("a"), { href: url, download: name });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) {
+      $("error").textContent = "Export impossible : " + err.message;
+    }
+  });
 
   document.querySelectorAll(".mode button").forEach((b) =>
     b.addEventListener("click", () => post("/api/mode", { summer: b.dataset.summer === "true" }))
@@ -485,6 +607,9 @@
   document.querySelectorAll("[data-release]").forEach((b) =>
     b.addEventListener("click", () => post("/api/force", { [b.dataset.release]: null }))
   );
+
+  applySession(null);
+  refreshSession();
 
   // --- Flux temps réel (reconnexion automatique gérée par EventSource) ---
   const events = new EventSource("/events");
