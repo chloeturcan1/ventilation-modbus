@@ -187,6 +187,21 @@ uv sync
 cd ihm && npm install && cd ..
 ```
 
+**Tu as déjà le projet sur ton ordinateur ?** Ne refais pas `git clone`, qui
+échoue si le dossier existe déjà. Va dans ton dossier existant et récupère
+la dernière version :
+
+```bash
+cd chemin/vers/ton/dossier
+git pull
+uv sync
+cd ihm && npm install && cd ..
+```
+
+Toutes les commandes suivantes se lancent **depuis le dossier du projet**.
+Garde un seul exemplaire du projet sur ton ordinateur : avec plusieurs
+copies, il est facile de lancer une ancienne version sans s'en rendre compte.
+
 **Terminal 1 — l'automate** (à laisser ouvert) :
 
 ```bash
@@ -221,6 +236,22 @@ toutes les lignes affichent `OK` et que la dernière indique
 voit les ventilateurs réagir en direct.
 
 Pour tout arrêter : **Ctrl+C** dans chaque terminal.
+
+### Problèmes fréquents
+
+- **`destination path 'ventilation-modbus' already exists`** : le projet est
+  déjà sur ton ordinateur. Utilise la procédure « Tu as déjà le projet » plus
+  haut au lieu de `git clone`.
+- **`address already in use`**, ou la page affiche une **ancienne version** :
+  une automate ou une IHM tourne déjà, peut-être lancée depuis un autre
+  dossier ou un autre terminal. Sur macOS ou Linux, arrête-les puis relance :
+
+  ```bash
+  lsof -ti tcp:502,3000 | xargs kill
+  ```
+
+  Recharge ensuite la page en vidant le cache (**Cmd+Shift+R** sur Mac,
+  **Ctrl+Shift+R** sous Windows et Linux).
 
 > Sous Linux, le port 502 est réservé à l'administrateur : lancer l'automate
 > avec `sudo`, ou changer `PORT` dans `modbus_map.py`.
