@@ -152,6 +152,24 @@
   .tools .btn[hidden] { display: none; }
   body.fullscreen .wrap { max-width: 1500px; }
 
+  /* --- Alertes par mail --- */
+  .alerts-card { margin-bottom: 16px; }
+  .email-list { list-style: none; margin: 10px 0; padding: 0; max-width: 480px; }
+  .email-list li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+  .email-list li:first-child { border-top: 0; }
+  .email-list li span { flex: 1; overflow-wrap: anywhere; }
+  .email-list .btn { font-size: 12px; padding: 4px 10px; }
+  .email-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .email-form input {
+    flex: 1 1 220px; max-width: 320px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  #mail-status.ko { color: var(--warn); }
+  #email-msg { font-size: 13px; font-weight: 600; margin-top: 8px; }
+  #email-msg.err { color: var(--err); }
+  #email-msg.ok { color: var(--on); }
+  .journal .ev-mail { color: var(--warn); }
+
   /* --- Ventilateurs : mode et défauts --- */
   .fan { flex-direction: column; align-items: stretch; }
   .fan-top { display: flex; align-items: center; gap: 14px; }
@@ -337,6 +355,23 @@
     </form>
   </section>
 
+  <section class="card alerts-card">
+    <h2>Alertes par mail</h2>
+    <p class="sub">Un mail est envoyé à ces adresses à chaque arrêt d'urgence. La liste est conservée au redémarrage de l'IHM.</p>
+    <p class="locked-hint admin-hint">Réservé à l'administrateur.</p>
+    <div id="alerts-admin" hidden>
+      <p class="sub" id="mail-status"></p>
+      <ul class="email-list" id="email-list"></ul>
+      <p class="sub" id="email-empty">Aucune adresse enregistrée.</p>
+      <form class="email-form" id="email-form" novalidate>
+        <input id="email-input" type="email" placeholder="prenom.nom@exemple.fr" autocomplete="email" aria-label="Adresse mail à ajouter">
+        <button class="btn primary" type="submit">Ajouter</button>
+        <button class="btn" type="button" id="email-test">Envoyer un mail de test</button>
+      </form>
+      <div id="email-msg" role="status"></div>
+    </div>
+  </section>
+
   <section class="card">
     <h2>Forçage des températures (tests)</h2>
     <p class="locked-hint admin-hint">Réservé à l'administrateur.</p>
@@ -449,8 +484,12 @@
   const timeFmt = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   // --- Klaxon d'alarme ---
-  // Sonne dès qu'une alarme apparaît, jusqu'à « Silence » ou un acquittement.
+  // Sonne dès qu'une alarme apparaît. « Silence » le coupe pendant SILENCE_S
+  // secondes : s'il reste alors une alarme non acquittée, il reprend. Seuls
+  // l'acquittement ou la disparition de toutes les alarmes l'arrêtent pour de bon.
   // Le silence ne concerne que cette page : il n'agit pas sur l'automate.
+  const SILENCE_S = 10;
+  let silenceTimer = null;
   let audioCtx = null;
   let soundEnabled = true;
   try { soundEnabled = localStorage.getItem("ihm-sound") !== "off"; } catch {}
@@ -487,19 +526,51 @@
     });
   }
 
+  function resetSilence() {
+    clearInterval(silenceTimer);
+    silenceTimer = null;
+    $("silence-btn").disabled = false;
+    $("silence-btn").textContent = "Silence";
+  }
+
   function startHorn() {
+    resetSilence();
+    $("silence-btn").hidden = false;
+    $("banner").classList.add("horn");
     if (hornTimer) return;
     beep();
     hornTimer = setInterval(beep, 1200);
-    $("banner").classList.add("horn");
-    $("silence-btn").hidden = false;
   }
 
-  function stopHorn() {
+  function muteHorn() {
     clearInterval(hornTimer);
     hornTimer = null;
     $("banner").classList.remove("horn");
+  }
+
+  function stopHorn() {
+    muteHorn();
+    resetSilence();
     $("silence-btn").hidden = true;
+  }
+
+  // Silence temporaire, avec le compte à rebours affiché sur le bouton.
+  function silence() {
+    muteHorn();
+    let remaining = SILENCE_S;
+    const btn = $("silence-btn");
+    btn.disabled = true;
+    btn.textContent = `Silence (${remaining} s)`;
+    silenceTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) {
+        btn.textContent = `Silence (${remaining} s)`;
+      } else if (previousAlarms && previousAlarms.some(Boolean)) {
+        startHorn();
+      } else {
+        stopHorn();
+      }
+    }, 1000);
   }
 
   // Une alarme « apparaît » quand sa cause devient présente ou qu'elle est
@@ -521,7 +592,7 @@
     showSound();
   });
   showSound();
-  $("silence-btn").addEventListener("click", stopHorn);
+  $("silence-btn").addEventListener("click", silence);
 
   // --- Plein écran (mode salle de contrôle) ---
   const root = document.documentElement;
@@ -568,7 +639,8 @@
         li.innerHTML = `<time></time><span></span>`;
         li.querySelector("time").textContent = timeFmt.format(e.time);
         const text = li.querySelector("span");
-        text.textContent = e.event === "action" ? `${e.label} (${e.user})` : `${e.label} — ${e.event}`;
+        text.textContent =
+          e.event === "action" ? `${e.label} (${e.user})` : e.event === "mail" ? e.label : `${e.label} — ${e.event}`;
         text.className = "ev-" + e.event;
         return li;
       })
@@ -715,6 +787,7 @@
     $("login-btn").hidden = Boolean(user);
     $("logout-btn").hidden = !user;
     document.querySelectorAll(".admin-hint").forEach((el) => (el.hidden = level >= ROLE_LEVELS.admin));
+    showAlertsCard(level >= ROLE_LEVELS.admin);
   }
 
   async function refreshSession() {
@@ -821,6 +894,89 @@
 
   applySession(null);
   refreshSession();
+
+  // --- Alertes par mail (administrateur) ---
+  async function api(url, body) {
+    const res = await fetch(url, body === undefined ? {} : {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (res.status === 401) refreshSession();
+    if (!data.ok) throw new Error(data.error);
+    return data;
+  }
+
+  function emailMessage(text, ok) {
+    $("email-msg").textContent = text;
+    $("email-msg").className = ok ? "ok" : "err";
+  }
+
+  function renderEmails(emails) {
+    $("email-empty").hidden = emails.length > 0;
+    $("email-list").replaceChildren(
+      ...emails.map((email) => {
+        const li = document.createElement("li");
+        li.innerHTML = `<span></span><button class="btn" type="button">Retirer</button>`;
+        li.querySelector("span").textContent = email;
+        li.querySelector("button").addEventListener("click", async () => {
+          try {
+            renderEmails((await api("/api/alert-emails/delete", { email })).emails);
+            emailMessage(`${email} retirée.`, true);
+          } catch (err) {
+            emailMessage(err.message, false);
+          }
+        });
+        return li;
+      })
+    );
+  }
+
+  async function loadAlertEmails() {
+    try {
+      const data = await api("/api/alert-emails");
+      renderEmails(data.emails);
+      const status = $("mail-status");
+      status.className = "sub" + (data.mail.configured ? "" : " ko");
+      status.textContent = data.mail.configured
+        ? `Envoi configuré (serveur ${data.mail.host}).`
+        : data.mail.error || "Envoi non configuré : créez ihm/mail.config.json (voir le README). Les adresses sont enregistrées, mais aucun mail ne part.";
+    } catch (err) {
+      emailMessage(err.message, false);
+    }
+  }
+
+  // Affiche la carte pour l'admin seulement, et vide la liste à la déconnexion.
+  function showAlertsCard(isAdmin) {
+    $("alerts-admin").hidden = !isAdmin;
+    if (isAdmin) loadAlertEmails();
+    else {
+      $("email-list").replaceChildren();
+      $("email-msg").textContent = "";
+    }
+  }
+
+  $("email-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = $("email-input").value.trim();
+    try {
+      renderEmails((await api("/api/alert-emails", { email })).emails);
+      $("email-input").value = "";
+      emailMessage(`${email} ajoutée.`, true);
+    } catch (err) {
+      emailMessage(err.message, false);
+    }
+  });
+  $("email-test").addEventListener("click", async () => {
+    emailMessage("Envoi en cours...", true);
+    try {
+      const { sent } = await api("/api/alert-emails/test", {});
+      emailMessage(`Mail de test envoyé à ${sent} destinataire(s).`, true);
+    } catch (err) {
+      emailMessage("Envoi impossible : " + err.message, false);
+    }
+  });
 
   // --- Horloge (heure de l'ordinateur qui affiche la page) ---
   const clockTime = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });

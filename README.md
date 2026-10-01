@@ -138,6 +138,7 @@ Tout le monde peut **consulter** l'IHM. Les commandes demandent de se connecter
 | Mode été / hiver, modes auto / marche / arrêt | | ✓ | ✓ |
 | Exporter le rapport d'alarmes en PDF | | ✓ | ✓ |
 | Régler les seuils, l'hystérésis et l'alarme haute | | | ✓ |
+| Gérer les destinataires des alertes par mail | | | ✓ |
 | Forcer les températures, simuler des pannes (tests) | | | ✓ |
 
 L'**arrêt d'urgence** reste accessible sans connexion : une sécurité ne doit
@@ -224,6 +225,56 @@ Le bouton **Exporter en PDF**, au-dessus du journal, télécharge un rapport
 L'IHM garde en mémoire les 500 derniers événements, remis à zéro à chaque
 redémarrage de l'IHM.
 
+## Alertes par mail
+
+À chaque **arrêt d'urgence**, l'IHM envoie un mail d'alerte à une liste
+d'adresses : date et heure, origine (depuis l'IHM et par quel utilisateur, ou
+depuis l'extérieur : commande Modbus directe, bouton physique), mode et
+températures. Le mail part dès que l'alarme apparaît, quelle que soit la façon
+dont l'arrêt d'urgence a été déclenché.
+
+La carte **Alertes par mail** de l'IHM, réservée à l'administrateur, permet
+d'ajouter et de retirer des adresses, et d'envoyer un mail de test. La liste
+est enregistrée dans `ihm/data/alert-emails.json` : elle est **conservée quand
+on redémarre l'IHM**. Les destinataires sont en copie cachée, et chacun ne voit
+pas les adresses des autres. Chaque envoi, réussi ou non, est inscrit dans le
+journal.
+
+### Configurer l'envoi
+
+L'IHM envoie les mails par le serveur d'un compte mail (SMTP). Il suffit de le
+décrire une fois dans le fichier `ihm/mail.config.json`, en partant du modèle
+[`ihm/mail.config.example.json`](ihm/mail.config.example.json) :
+
+```json
+{
+  "host": "smtp.gmail.com",
+  "port": 465,
+  "user": "votre.adresse@gmail.com",
+  "pass": "mot de passe d'application (16 lettres)",
+  "from": "Ventilation <votre.adresse@gmail.com>"
+}
+```
+
+Avec **Gmail**, le champ `pass` n'est pas le mot de passe du compte, mais un
+**mot de passe d'application**. Il faut d'abord activer la validation en deux
+étapes du compte Google, puis le créer sur
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
+Pour **Outlook / Hotmail**, utiliser `smtp-mail.outlook.com`, port `587`.
+
+Le fichier est relu à chaque envoi : inutile de redémarrer l'IHM. Le bouton
+**Envoyer un mail de test** permet de vérifier la configuration. Sans ce
+fichier, les adresses restent enregistrées, mais aucun mail ne part, et le
+journal l'indique.
+
+`ihm/mail.config.json` (qui contient un mot de passe) et `ihm/data/` (les
+adresses) ne sont **pas envoyés sur GitHub** : ils sont exclus par
+`.gitignore`. Ils restent propres à chaque ordinateur et à chaque copie du
+projet.
+
+À noter : `client.py` déclenche lui aussi des arrêts d'urgence pendant son
+test. Si l'envoi est configuré, chaque test envoie donc des mails d'alerte.
+
 ## Table d'échange Modbus
 
 Automate : unit id **1**, port **502**. Toutes les adresses sont définies à un
@@ -276,6 +327,9 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 ├── ihm/
 │   ├── server.js         # serveur de l'IHM : passerelle Modbus <-> navigateur, accès, journal
 │   ├── report.js         # génération du rapport d'alarmes en PDF
+│   ├── alerts.js         # alertes par mail : destinataires et envoi
+│   ├── mail.config.example.json  # modèle de configuration de l'envoi des mails
+│   ├── data/             # données locales (adresses d'alerte), non versionnées
 │   ├── modbus_map.js     # relit les adresses dans modbus_map.py
 │   └── public/index.html # la page de supervision
 └── pyproject.toml, uv.lock, ihm/package.json   # dépendances
@@ -283,8 +337,8 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 
 Technologies : **Python 3.13** avec [uv](https://docs.astral.sh/uv/) et
 [pymodbus](https://pymodbus.readthedocs.io/) 3.15 pour l'automate ;
-**Node.js** avec [modbus-serial](https://www.npmjs.com/package/modbus-serial)
-et [PDFKit](https://pdfkit.org/) pour l'IHM.
+**Node.js** avec [modbus-serial](https://www.npmjs.com/package/modbus-serial),
+[PDFKit](https://pdfkit.org/) et [Nodemailer](https://nodemailer.com/) pour l'IHM.
 
 ## Tester le projet
 
@@ -459,8 +513,10 @@ exemple `admin` / `admin`.
 
 **Klaxon d'alarme** : dès qu'une alarme apparaît, la page émet une sirène à
 deux tons et le bandeau d'alarme clignote. Le bouton **Silence** du bandeau
-coupe le klaxon sans acquitter l'alarme. Il est accessible à tous et n'agit que
-sur la page, pas sur l'automate. **Acquitter** coupe aussi le klaxon. Le bouton
+coupe le klaxon pendant **10 secondes**, avec un compte à rebours. S'il reste
+alors une alarme non acquittée, le klaxon reprend. Silence est accessible à
+tous et n'agit que sur la page, pas sur l'automate. **Acquitter** arrête le
+klaxon pour de bon. Le bouton
 **Son** en haut de la page coupe ou réactive le klaxon pour de bon, et ce choix
 est mémorisé par le navigateur. Les navigateurs n'autorisent le son qu'après un
 premier clic sur la page : cliquez n'importe où après l'ouverture pour qu'il

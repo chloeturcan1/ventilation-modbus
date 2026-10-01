@@ -9,6 +9,7 @@
 //   connexion, mais chaque commande demande un niveau d'accès minimal ;
 // - tient un journal horodaté des alarmes (apparition, disparition, acquittement)
 //   et des actions des utilisateurs, exportable en rapport PDF ;
+// - envoie un mail d'alerte aux adresses enregistrées à chaque arrêt d'urgence ;
 // - sert la page web (public/index.html).
 //
 // Toutes les requêtes Modbus passent par une file unique : le client
@@ -21,6 +22,7 @@ const path = require("node:path");
 const ModbusRTU = require("modbus-serial");
 const { map: mm, toRegister, fromRegister } = require("./modbus_map");
 const { writeReport } = require("./report");
+const alerts = require("./alerts");
 
 const PLC_HOST = process.env.PLC_HOST || "127.0.0.1";
 const PLC_PORT = Number(process.env.PLC_PORT || mm.PORT);
@@ -64,6 +66,7 @@ const journal = []; // du plus récent au plus ancien
 const startedAt = Date.now();
 const sessions = new Map(); // jeton -> { name, role, expires }
 let lastAlarms = null; // alarmes lues au dernier cycle, pour détecter les changements
+let lastEmergencyPress = null; // { user, time } : dernier AU enfoncé depuis l'IHM
 
 // --- File d'attente Modbus ----------------------------------------------------
 let queue = Promise.resolve();
@@ -144,13 +147,17 @@ function updateJournal(alarms, time) {
   if (lastAlarms) {
     alarms.forEach((a, i) => {
       const before = lastAlarms[i];
-      let event = null;
+      const events = [];
       // Une cause brève (ex. défaut de rotation, coupé dès le cycle suivant) peut
       // passer entre deux lectures : sa mémorisation compte aussi comme apparition.
-      if ((a.active && !before.active) || (a.latched && !before.latched)) event = "apparition";
-      else if (!a.active && before.active) event = "disparition";
-      else if (!a.latched && before.latched) event = "acquittement";
-      if (event) addJournal({ time, label: a.label, event });
+      // À l'inverse, disparition et acquittement peuvent tomber entre deux lectures.
+      if ((a.active && !before.active) || (a.latched && !before.latched)) events.push("apparition");
+      else {
+        if (!a.active && before.active) events.push("disparition");
+        if (!a.latched && before.latched) events.push("acquittement");
+      }
+      for (const event of events) addJournal({ time, label: a.label, event });
+      if (events.includes("apparition") && i === mm.ALARM_EMERGENCY_STOP) sendEmergencyMail(time);
     });
   } else {
     // Première lecture : on note les alarmes déjà présentes.
@@ -164,6 +171,49 @@ function updateJournal(alarms, time) {
 function addJournal(entry) {
   journal.unshift(entry);
   journal.length = Math.min(journal.length, JOURNAL_SIZE);
+}
+
+// --- Mail d'alerte sur arrêt d'urgence -------------------------------------------
+// Déclenché par l'apparition de l'alarme, et non par le bouton de la page : un
+// arrêt d'urgence venant d'ailleurs (client Modbus, bouton physique) est aussi signalé.
+const dateTime = new Intl.DateTimeFormat("fr-FR", { dateStyle: "full", timeStyle: "medium" });
+
+function emergencyMailText(time) {
+  const press = lastEmergencyPress && time - lastEmergencyPress.time < 5000 ? lastEmergencyPress : null;
+  const origin = press
+    ? `depuis l'IHM (utilisateur : ${press.user})`
+    : "hors de l'IHM (commande Modbus directe ou bouton externe)";
+  const lines = [
+    "ALERTE : l'arrêt d'urgence de la ventilation a été déclenché.",
+    "",
+    `Date : ${dateTime.format(time)}`,
+    `Origine : ${origin}`,
+  ];
+  if (state.connected) {
+    lines.push(
+      `Mode : ${state.summer ? "été" : "hiver"}`,
+      `Température intérieure : ${state.t_int.toFixed(1)} °C`,
+      `Température extérieure : ${state.t_ext.toFixed(1)} °C`
+    );
+  }
+  lines.push(
+    "",
+    "Tous les ventilateurs sont arrêtés. Ils ne redémarreront qu'après le",
+    "relâchement du bouton et un acquittement depuis l'IHM de supervision.",
+    "",
+    "-- Message automatique de l'IHM Ventilation Modbus"
+  );
+  return lines.join("\n");
+}
+
+async function sendEmergencyMail(time) {
+  try {
+    const n = await alerts.sendToAll("[ALERTE] Arrêt d'urgence - Ventilation", emergencyMailText(time));
+    addJournal({ time: Date.now(), label: `Mail d'alerte envoyé à ${n} destinataire(s)`, event: "mail" });
+  } catch (err) {
+    addJournal({ time: Date.now(), label: `Mail d'alerte non envoyé : ${err.message}`, event: "mail" });
+  }
+  broadcast();
 }
 
 // Trace une action d'un utilisateur dans le journal.
@@ -427,7 +477,9 @@ const server = http.createServer(async (req, res) => {
       // Le relâcher ne relance rien : le réarmement passe par l'acquittement.
       const { pressed } = await readJson(req);
       await setCoil(mm.COIL_EMERGENCY_STOP, checkBoolean(pressed, "pressed"));
-      logAction(currentUser(req), pressed ? "Arrêt d'urgence enfoncé" : "Arrêt d'urgence relâché");
+      const user = currentUser(req);
+      if (pressed) lastEmergencyPress = { user: user ? user.name : "non connecté", time: Date.now() };
+      logAction(user, pressed ? "Arrêt d'urgence enfoncé" : "Arrêt d'urgence relâché");
       sendJson(res, 200, { ok: true });
     } else if (req.method === "POST" && req.url === "/api/ack") {
       const user = requireRole(req, "operator");
@@ -459,6 +511,29 @@ const server = http.createServer(async (req, res) => {
       await setCoil(mm.COIL_RESTORE_DEFAULTS, true); // impulsion remise à false par l'automate
       logAction(user, "Retour aux réglages par défaut");
       sendJson(res, 200, { ok: true });
+    } else if (req.method === "GET" && req.url === "/api/alert-emails") {
+      requireRole(req, "admin"); // adresses personnelles : visibles par l'admin seulement
+      sendJson(res, 200, { ok: true, emails: alerts.getEmails(), mail: alerts.mailStatus() });
+    } else if (req.method === "POST" && req.url === "/api/alert-emails") {
+      const user = requireRole(req, "admin");
+      const email = alerts.addEmail((await readJson(req)).email);
+      logAction(user, `Destinataire d'alerte ajouté : ${email}`);
+      sendJson(res, 200, { ok: true, emails: alerts.getEmails() });
+    } else if (req.method === "POST" && req.url === "/api/alert-emails/delete") {
+      const user = requireRole(req, "admin");
+      const email = alerts.removeEmail((await readJson(req)).email);
+      logAction(user, `Destinataire d'alerte retiré : ${email}`);
+      sendJson(res, 200, { ok: true, emails: alerts.getEmails() });
+    } else if (req.method === "POST" && req.url === "/api/alert-emails/test") {
+      const user = requireRole(req, "admin");
+      const n = await alerts.sendToAll(
+        "[TEST] Alerte Ventilation",
+        `Mail de test envoyé depuis l'IHM par ${user.name}.\n\n` +
+          "Ces adresses recevront un mail d'alerte à chaque arrêt d'urgence.\n\n" +
+          "-- Message automatique de l'IHM Ventilation Modbus"
+      );
+      logAction(user, `Mail de test envoyé à ${n} destinataire(s)`);
+      sendJson(res, 200, { ok: true, sent: n });
     } else if (req.method === "GET" && req.url === "/api/report.pdf") {
       const user = requireRole(req, "operator");
       const stamp = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "h");

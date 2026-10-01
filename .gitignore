@@ -3,3 +3,7 @@ __pycache__/
 .venv
 .venv.nosync/
 node_modules/
+
+# Donnees locales de l IHM : adresses d alerte et configuration mail (mot de passe)
+ihm/data/
+ihm/mail.config.json
