@@ -449,7 +449,7 @@ désactivée sur ce système »), alors que `npm.cmd` fonctionne toujours.
 
 ### Utiliser l'IHM
 
-La page **http://localhost:3000** montre les températures en direct, l'état
+La page **http://localhost:3000** montre la date et l'heure, les températures en direct, l'état
 des 4 ventilateurs avec leur mode auto / marche / arrêt, le bouton été/hiver,
 l'arrêt d'urgence, les alarmes et le journal, les réglages des seuils, le
 forçage des températures et la simulation de pannes. Pour utiliser les

@@ -57,6 +57,9 @@
     margin-bottom: 20px;
   }
   h1 { font-size: 22px; margin: 0; flex: 1 1 auto; }
+  .clock { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+  .clock .time { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .clock .date { font-size: 12px; color: var(--muted); }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
 
   .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
@@ -221,6 +224,10 @@
 <div class="wrap">
   <header>
     <h1>Ventilation &mdash; supervision</h1>
+    <div class="clock" aria-label="Date et heure">
+      <span class="time" id="clock-time">--:--:--</span>
+      <span class="date" id="clock-date"></span>
+    </div>
     <span id="status" class="pill ko">Connexion...</span>
     <div class="mode" role="group" aria-label="Mode de fonctionnement">
       <button class="summer" data-summer="true" aria-pressed="false" data-need="operator">Été</button>
@@ -694,6 +701,17 @@
 
   applySession(null);
   refreshSession();
+
+  // --- Horloge (heure de l'ordinateur qui affiche la page) ---
+  const clockTime = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const clockDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  function tick() {
+    const now = new Date();
+    $("clock-time").textContent = clockTime.format(now);
+    $("clock-date").textContent = clockDate.format(now);
+  }
+  tick();
+  setInterval(tick, 1000);
 
   // --- Flux temps réel (reconnexion automatique gérée par EventSource) ---
   const events = new EventSource("/events");
