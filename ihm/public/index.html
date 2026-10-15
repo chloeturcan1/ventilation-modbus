@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ventilation - Supervision</title>
-<link rel="stylesheet" href="/common.css">
+<link rel="stylesheet" href="common.css">
 <style>
   header {
     display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
@@ -205,6 +205,7 @@
       <button class="btn" id="sound-btn" aria-pressed="true">Son : activé</button>
       <button class="btn" id="fullscreen-btn">Plein écran</button>
       <button class="btn" id="alerts-btn">Alertes mail</button>
+      <button class="btn" id="editor-btn" hidden>Éditeur Node-RED</button>
     </div>
     <div class="user">
       <span class="who" id="who">Consultation seule</span>
@@ -376,14 +377,14 @@
     el.querySelector(".fan-label").textContent = name;
     if (i === 3) el.classList.add("reverse"); // V4 est monté à l'envers : il insuffle
     el.querySelectorAll(".seg button").forEach((b) =>
-      b.addEventListener("click", () => post("/api/fan-mode", { fan: i + 1, mode: b.dataset.mode }))
+      b.addEventListener("click", () => post("api/fan-mode", { fan: i + 1, mode: b.dataset.mode }))
     );
     $("fans").appendChild(el);
 
     const fault = document.createElement("label");
     fault.innerHTML = `<input type="checkbox" data-need="admin"> ${name}`;
     fault.querySelector("input").addEventListener("change", (e) =>
-      post("/api/fan-fault", { fan: i + 1, fault: e.target.checked })
+      post("api/fan-fault", { fan: i + 1, fault: e.target.checked })
     );
     $("faults").appendChild(fault);
     return el;
@@ -621,13 +622,13 @@
   });
   $("settings-defaults").addEventListener("click", async () => {
     if (!confirm("Remettre tous les seuils, l'hystérésis et l'alarme haute à leurs valeurs par défaut ?")) return;
-    const ok = await post("/api/settings/defaults", {}, "Retour aux valeurs par défaut refusé : ");
+    const ok = await post("api/settings/defaults", {}, "Retour aux valeurs par défaut refusé : ");
     if (ok) settingsDirty = false;
   });
   $("settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const v = (id) => parseFloat($(id).value);
-    const ok = await post("/api/settings", {
+    const ok = await post("api/settings", {
       summer: [v("set-summer-1"), v("set-summer-2"), v("set-summer-3")],
       winter: [v("set-winter-1"), v("set-winter-2"), v("set-winter-3")],
       winter_intake: v("set-winter-intake"),
@@ -719,7 +720,7 @@
 
   async function refreshSession() {
     try {
-      const data = await (await fetch("/api/session")).json();
+      const data = await (await fetch("api/session")).json();
       applySession(data.user);
     } catch {
       applySession(null);
@@ -734,7 +735,7 @@
   $("login-cancel").addEventListener("click", () => $("login-dialog").close());
   $("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const res = await fetch("/api/login", {
+    const res = await fetch("api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: $("login-user").value.trim(), password: $("login-pass").value }),
@@ -748,7 +749,7 @@
     applySession(data.user);
   });
   $("logout-btn").addEventListener("click", async () => {
-    await fetch("/api/logout", { method: "POST" });
+    await fetch("api/logout", { method: "POST" });
     applySession(null);
   });
 
@@ -776,7 +777,7 @@
   $("export-pdf").addEventListener("click", async () => {
     $("error").textContent = "";
     try {
-      const res = await fetch("/api/report.pdf");
+      const res = await fetch("api/report.pdf");
       if (!res.ok) {
         if (res.status === 401) refreshSession();
         throw new Error((await res.json()).error);
@@ -792,7 +793,7 @@
   });
 
   document.querySelectorAll(".mode button").forEach((b) =>
-    b.addEventListener("click", () => post("/api/mode", { summer: b.dataset.summer === "true" }))
+    b.addEventListener("click", () => post("api/mode", { summer: b.dataset.summer === "true" }))
   );
   document.querySelectorAll("[data-force]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -802,21 +803,21 @@
         $("error").textContent = "Saisis une température valide.";
         return;
       }
-      post("/api/force", { [key]: value });
+      post("api/force", { [key]: value });
     })
   );
   $("estop").addEventListener("click", () =>
-    post("/api/emergency-stop", { pressed: $("estop").getAttribute("aria-pressed") !== "true" })
+    post("api/emergency-stop", { pressed: $("estop").getAttribute("aria-pressed") !== "true" })
   );
   // Acquitter vaut aussi silence, comme sur un vrai pupitre.
   document.querySelectorAll("[data-ack]").forEach((b) =>
     b.addEventListener("click", () => {
       stopHorn();
-      post("/api/ack", {});
+      post("api/ack", {});
     })
   );
   document.querySelectorAll("[data-release]").forEach((b) =>
-    b.addEventListener("click", () => post("/api/force", { [b.dataset.release]: null }))
+    b.addEventListener("click", () => post("api/force", { [b.dataset.release]: null }))
   );
 
   applySession(null);
@@ -844,10 +845,15 @@
       notice("Les alertes par mail sont réservées à l'administrateur : vous êtes connecté en opérateur.", false);
     } else {
       // Fenêtre séparée ; si le navigateur bloque les fenêtres, nouvel onglet.
-      const win = window.open("/alertes", "alertes-mail", "width=760,height=860");
-      if (!win) window.open("/alertes", "_blank");
+      const win = window.open("alertes", "alertes-mail", "width=760,height=860");
+      if (!win) window.open("alertes", "_blank");
     }
   });
+
+  // Page servie par Node-RED (sous /ihm/) : accès à l'éditeur de blocs, à la
+  // racine du même serveur. Absent de l'IHM web (ihm/server.js).
+  $("editor-btn").hidden = !location.pathname.startsWith("/ihm/");
+  $("editor-btn").addEventListener("click", () => window.open("/", "nodered-editeur"));
 
   // --- Horloge (heure de l'ordinateur qui affiche la page) ---
   const clockTime = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -861,7 +867,7 @@
   setInterval(tick, 1000);
 
   // --- Flux temps réel (reconnexion automatique gérée par EventSource) ---
-  const events = new EventSource("/events");
+  const events = new EventSource("events");
   events.onmessage = (e) => render(JSON.parse(e.data));
   events.onerror = () => render({ connected: false, ihmDown: true });
 </script>

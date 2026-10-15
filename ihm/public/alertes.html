@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ventilation - Alertes par mail</title>
-<link rel="stylesheet" href="/common.css">
+<link rel="stylesheet" href="common.css">
 <style>
   .wrap { max-width: 720px; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 8px; }
@@ -54,7 +54,7 @@
   <section class="card" id="locked" hidden>
     <h2>Accès réservé à l'administrateur</h2>
     <p id="locked-text"></p>
-    <a class="btn" href="/">Aller à la supervision</a>
+    <a class="btn" href="./">Aller à la supervision</a>
   </section>
 
   <div id="admin" hidden>
@@ -156,7 +156,7 @@
     e.preventDefault();
     message("account-msg", "Vérification auprès du serveur de messagerie...", true);
     try {
-      const { account } = await api("/api/mail-account", {
+      const { account } = await api("api/mail-account", {
         address: $("account-address").value,
         password: $("account-password").value,
         host: $("account-host").value,
@@ -176,7 +176,7 @@
   $("account-delete").addEventListener("click", async () => {
     if (!confirm("Supprimer le compte d'envoi ? Plus aucun mail d'alerte ne partira.")) return;
     try {
-      renderAccount((await api("/api/mail-account/delete", {})).account);
+      renderAccount((await api("api/mail-account/delete", {})).account);
       message("account-msg", "Compte d'envoi supprimé.", true);
     } catch (err) {
       handle(err, "account-msg");
@@ -193,7 +193,7 @@
         li.querySelector("span").textContent = email;
         li.querySelector("button").addEventListener("click", async () => {
           try {
-            renderEmails((await api("/api/alert-emails/delete", { email })).emails);
+            renderEmails((await api("api/alert-emails/delete", { email })).emails);
             message("email-msg", `${email} retirée.`, true);
           } catch (err) {
             handle(err, "email-msg");
@@ -208,7 +208,7 @@
     e.preventDefault();
     const email = $("email-input").value.trim();
     try {
-      renderEmails((await api("/api/alert-emails", { email })).emails);
+      renderEmails((await api("api/alert-emails", { email })).emails);
       $("email-input").value = "";
       message("email-msg", `${email} ajoutée.`, true);
     } catch (err) {
@@ -218,7 +218,7 @@
   $("email-test").addEventListener("click", async () => {
     message("email-msg", "Envoi en cours...", true);
     try {
-      const { sent } = await api("/api/alert-emails/test", {});
+      const { sent } = await api("api/alert-emails/test", {});
       message("email-msg", `Mail de test envoyé à ${sent} destinataire(s).`, true);
     } catch (err) {
       handle(err, "email-msg");
@@ -229,15 +229,15 @@
   // (lien, favori) : on revient à la supervision.
   $("close-btn").addEventListener("click", () => {
     if (window.opener) window.close();
-    else location.href = "/";
+    else location.href = "./";
   });
 
   async function init() {
     try {
-      const { user } = await (await fetch("/api/session")).json();
+      const { user } = await (await fetch("api/session")).json();
       if (!user || user.role !== "admin") return showLocked(user);
       $("who").textContent = `${user.name} · ${ROLE_NAMES[user.role]}`;
-      const data = await api("/api/alert-emails");
+      const data = await api("api/alert-emails");
       $("locked").hidden = true;
       $("admin").hidden = false;
       renderAccount(data.account);

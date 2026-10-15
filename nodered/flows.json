@@ -1,13 +1,6 @@
 [
     {
-        "id": "f0a1000000000001",
-        "type": "tab",
-        "label": "Ventilation",
-        "disabled": false,
-        "info": "IHM de l'automate de ventilation. Généré par build-flows.js à partir de modbus_map.py."
-    },
-    {
-        "id": "f0a1000000000002",
+        "id": "f0a1000000000100",
         "type": "modbus-client",
         "name": "Automate ventilation",
         "clienttype": "tcp",
@@ -34,7 +27,1035 @@
         "parallelUnitIdsAllowed": true
     },
     {
-        "id": "f0a1000000000003",
+        "id": "f0a1000000000101",
+        "type": "tab",
+        "label": "Automate",
+        "disabled": false,
+        "info": "Lit l'automate toutes les 500 ms, tient l'état et le journal des alarmes, et les diffuse aux pages ouvertes."
+    },
+    {
+        "id": "f0a1000000000102",
+        "type": "comment",
+        "z": "f0a1000000000101",
+        "name": "IHM : http://localhost:1880/ihm/",
+        "info": "Ouvrir l'IHM : [http://localhost:1880/ihm/](http://localhost:1880/ihm/)\n\nCe sont les pages de `ihm/public`, servies par ces flux au lieu de `ihm/server.js`.",
+        "x": 170,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "f0a1000000000103",
+        "type": "function",
+        "z": "f0a1000000000101",
+        "name": "Outils partagés",
+        "outputs": 0,
+        "timeout": 0,
+        "noerr": 0,
+        "func": "// Tout le travail est fait au démarrage : voir l'onglet « Au démarrage ».\nreturn null;",
+        "initialize": "// Outils partagés par tous les flux (code « Au démarrage » du bloc).\n//\n// Rassemble ce que ihm/server.js gardait en mémoire : l'état de l'automate, le\n// journal, les sessions et les pages ouvertes (flux temps réel). Les autres\n// blocs y accèdent par global.get(\"ihm\").\n\nconst mm = global.get(\"mm\");\nconst crypto = global.get(\"crypto\");\nconst passwords = global.get(\"passwords\");\n\nconst JOURNAL_SIZE = 500;\n// Nom différent de celui de ihm/server.js : les deux IHM tournent sur localhost\n// et le navigateur partage les cookies entre les ports.\nconst COOKIE = \"ihm_nodered_session\";\nconst SESSION_MS = 8 * 3600 * 1000; // une session dure le temps d'un poste de travail\n\nconst USERS = {\n    operateur: { role: \"operator\", password: passwords.operateur },\n    admin: { role: \"admin\", password: passwords.admin },\n};\nconst ROLE_LEVELS = { operator: 1, admin: 2 };\n\n// Erreur renvoyée à la page avec son code HTTP (401 connexion requise, 403 accès insuffisant...).\nfunction httpError(status, message) {\n    const err = new Error(message);\n    err.status = status;\n    return err;\n}\n\n// Comparaison en temps constant, pour ne rien révéler du mot de passe.\nfunction samePassword(a, b) {\n    const hash = (s) => crypto.createHash(\"sha256\").update(String(s)).digest();\n    return crypto.timingSafeEqual(hash(a), hash(b));\n}\n\nconst ihm = {\n    mm,\n    JOURNAL_SIZE,\n    SESSION_MS,\n    state: { connected: false },\n    journal: [], // du plus récent au plus ancien\n    startedAt: Date.now(),\n    lastRead: 0, // heure de la dernière lecture réussie de l'automate\n    lastAlarms: null, // alarmes lues au dernier cycle, pour détecter les changements\n    lastEmergencyPress: null, // { user, time } : dernier AU enfoncé depuis l'IHM\n    sessions: new Map(), // jeton -> { name, role, expires }\n    sseClients: new Set(), // pages ouvertes, qui reçoivent l'état en temps réel\n\n    httpError,\n\n    addJournal(entry) {\n        ihm.journal.unshift(entry);\n        ihm.journal.length = Math.min(ihm.journal.length, JOURNAL_SIZE);\n    },\n\n    // Envoie l'état et le journal à toutes les pages ouvertes.\n    broadcast() {\n        const data = `data: ${JSON.stringify({ ...ihm.state, journal: ihm.journal })}\\n\\n`;\n        for (const res of ihm.sseClients) res.write(data);\n    },\n\n    // Trace une action d'un utilisateur dans le journal.\n    logAction(user, label) {\n        ihm.addJournal({ time: Date.now(), label, event: \"action\", user: user ? user.name : \"non connecté\" });\n        ihm.broadcast();\n    },\n\n    currentUser(req) {\n        const token = req.cookies && req.cookies[COOKIE];\n        const session = token && ihm.sessions.get(token);\n        if (!session) return null;\n        if (session.expires < Date.now()) {\n            ihm.sessions.delete(token);\n            return null;\n        }\n        return session;\n    },\n\n    // Renvoie l'utilisateur connecté s'il a au moins le niveau demandé.\n    requireRole(req, role) {\n        const user = ihm.currentUser(req);\n        if (!user) throw httpError(401, \"connexion requise\");\n        if (ROLE_LEVELS[user.role] < ROLE_LEVELS[role]) {\n            throw httpError(403, role === \"admin\" ? \"commande réservée à l'administrateur\" : \"accès insuffisant\");\n        }\n        return user;\n    },\n\n    // Ouvre une session ; renvoie l'utilisateur et l'en-tête Set-Cookie à envoyer.\n    login(username, password) {\n        const account = Object.hasOwn(USERS, username) ? USERS[username] : null;\n        // On compare même si le compte n'existe pas, pour ne pas révéler les identifiants valides.\n        const ok = samePassword(password, account ? account.password : crypto.randomUUID()) && account;\n        if (!ok) throw httpError(401, \"identifiant ou mot de passe incorrect\");\n        const token = crypto.randomBytes(32).toString(\"hex\");\n        const user = { name: username, role: account.role, expires: Date.now() + SESSION_MS };\n        ihm.sessions.set(token, user);\n        const cookie = `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`;\n        return { user, cookie };\n    },\n\n    logout(req) {\n        const token = req.cookies && req.cookies[COOKIE];\n        if (token) ihm.sessions.delete(token);\n        return `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;\n    },\n\n    sessionInfo: (user) => (user ? { name: user.name, role: user.role } : null),\n\n    // Prépare la réponse JSON au bloc « http response ».\n    reply(msg, status, payload, headers = {}) {\n        msg.statusCode = status;\n        msg.headers = { \"Content-Type\": \"application/json; charset=utf-8\", ...headers };\n        msg.payload = JSON.stringify(payload);\n        return msg;\n    },\n\n    replyError(msg, err) {\n        return ihm.reply(msg, err.status || 400, { ok: false, error: err.message });\n    },\n};\n\nglobal.set(\"ihm\", ihm);",
+        "finalize": "// Au redéploiement : ferme les flux temps réel des pages ouvertes, qui se\n// reconnectent d'elles-mêmes au nouveau flux.\nconst ihm = global.get(\"ihm\");\nif (ihm) for (const res of ihm.sseClients) res.end();",
+        "libs": [],
+        "x": 150,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "f0a1000000000104",
+        "type": "function",
+        "z": "f0a1000000000101",
+        "name": "Journal des alarmes",
+        "func": "// Compare les alarmes avec celles du cycle précédent, alimente le journal et\n// envoie le mail d'alerte à l'apparition de l'arrêt d'urgence. Puis diffuse\n// l'état aux pages ouvertes.\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\nconst { alarms, time } = msg.payload;\n\nif (ihm.lastAlarms) {\n    alarms.forEach((a, i) => {\n        const before = ihm.lastAlarms[i];\n        const events = [];\n        // Une cause brève (ex. défaut de rotation, coupé dès le cycle suivant) peut\n        // passer entre deux lectures : sa mémorisation compte aussi comme apparition.\n        // À l'inverse, disparition et acquittement peuvent tomber entre deux lectures.\n        if ((a.active && !before.active) || (a.latched && !before.latched)) events.push(\"apparition\");\n        else {\n            if (!a.active && before.active) events.push(\"disparition\");\n            if (!a.latched && before.latched) events.push(\"acquittement\");\n        }\n        for (const event of events) ihm.addJournal({ time, label: a.label, event });\n        if (events.includes(\"apparition\") && i === mm.ALARM_EMERGENCY_STOP) sendEmergencyMail(time);\n    });\n} else {\n    // Première lecture : on note les alarmes déjà présentes.\n    alarms.forEach((a) => {\n        if (a.active || a.latched) ihm.addJournal({ time, label: a.label, event: \"présente au démarrage\" });\n    });\n}\nihm.lastAlarms = alarms;\nihm.broadcast();\nreturn null;\n\n// --- Mail d'alerte sur arrêt d'urgence ---------------------------------------\n// Déclenché par l'apparition de l'alarme, et non par le bouton de la page : un\n// arrêt d'urgence venant d'ailleurs (client Modbus, bouton physique) est aussi signalé.\nfunction emergencyMailText(time) {\n    const dateTime = new Intl.DateTimeFormat(\"fr-FR\", { dateStyle: \"full\", timeStyle: \"medium\" });\n    const last = ihm.lastEmergencyPress;\n    const press = last && time - last.time < 5000 ? last : null;\n    const origin = press\n        ? `depuis l'IHM (utilisateur : ${press.user})`\n        : \"hors de l'IHM (commande Modbus directe ou bouton externe)\";\n    const s = ihm.state;\n    const lines = [\n        \"ALERTE : l'arrêt d'urgence de la ventilation a été déclenché.\",\n        \"\",\n        `Date : ${dateTime.format(time)}`,\n        `Origine : ${origin}`,\n    ];\n    if (s.connected) {\n        lines.push(\n            `Mode : ${s.summer ? \"été\" : \"hiver\"}`,\n            `Température intérieure : ${s.t_int.toFixed(1)} °C`,\n            `Température extérieure : ${s.t_ext.toFixed(1)} °C`\n        );\n    }\n    lines.push(\n        \"\",\n        \"Tous les ventilateurs sont arrêtés. Ils ne redémarreront qu'après le\",\n        \"relâchement du bouton et un acquittement depuis l'IHM de supervision.\",\n        \"\",\n        \"-- Message automatique de l'IHM Ventilation Modbus\"\n    );\n    return lines.join(\"\\n\");\n}\n\nfunction sendEmergencyMail(time) {\n    global.get(\"alerts\").sendToAll(\"[ALERTE] Arrêt d'urgence - Ventilation\", emergencyMailText(time))\n        .then((n) => ihm.addJournal({ time: Date.now(), label: `Mail d'alerte envoyé à ${n} destinataire(s)`, event: \"mail\" }))\n        .catch((err) => ihm.addJournal({ time: Date.now(), label: `Mail d'alerte non envoyé : ${err.message}`, event: \"mail\" }))\n        .finally(() => ihm.broadcast());\n}",
+        "outputs": 0,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 245,
+        "wires": []
+    },
+    {
+        "id": "f0a1000000000105",
+        "type": "function",
+        "z": "f0a1000000000101",
+        "name": "État de l'automate",
+        "func": "// Réunit les quatre lectures Modbus en un seul état, au même format que\n// readPlc() dans ihm/server.js (c'est ce que la page attend).\n// msg.topic indique la lecture : coils (FC1), fans (FC2), holding (FC3), inputs (FC4).\nconst ihm = global.get(\"ihm\");\nconst mm = global.get(\"mm\");\nconst fromRegister = global.get(\"fromRegister\");\n\nconst raw = context.get(\"raw\") || {};\nraw[msg.topic] = msg.payload;\ncontext.set(\"raw\", raw);\n\n// On recalcule l'état à chaque lecture des capteurs et alarmes (FC4), une fois\n// les trois autres lectures reçues au moins une fois.\nconst { coils, fans, holding, inputs } = raw;\nif (msg.topic !== \"inputs\" || !coils || !fans || !holding) return null;\n\nconst coil = (address) => coils[address - mm.COILS_START];\nconst ir = (address) => inputs[address - mm.IR_SENSORS_START];\nconst hr = (address) => holding[address]; // lecture FC3 à partir de l'adresse 0\nconst setting = (address) => fromRegister(hr(address));\n\nconst FAN_MODE_NAMES = { [mm.FAN_MODE_AUTO]: \"auto\", [mm.FAN_MODE_MANUAL_ON]: \"on\", [mm.FAN_MODE_MANUAL_OFF]: \"off\" };\nconst FAN_MODE_REGISTERS = [mm.HR_FAN_MODE_1, mm.HR_FAN_MODE_2, mm.HR_FAN_MODE_3, mm.HR_FAN_MODE_4];\nconst FAN_FAULT_COILS = [mm.COIL_FAN_FAULT_1, mm.COIL_FAN_FAULT_2, mm.COIL_FAN_FAULT_3, mm.COIL_FAN_FAULT_4];\nconst fanAddresses = [mm.DI_FAN_1, mm.DI_FAN_2, mm.DI_FAN_3, mm.DI_FAN_4];\nconst active = ir(mm.IR_ALARMS_ACTIVE);\nconst latched = ir(mm.IR_ALARMS_LATCHED);\n\nihm.state = {\n    connected: true,\n    t_int: fromRegister(ir(mm.IR_T_INT)),\n    t_ext: fromRegister(ir(mm.IR_T_EXT)),\n    fans: fanAddresses.map((a) => fans[a - mm.DI_FANS_START]),\n    summer: coil(mm.COIL_SUMMER_MODE),\n    force_int: coil(mm.COIL_FORCE_T_INT),\n    force_ext: coil(mm.COIL_FORCE_T_EXT),\n    forced_int: fromRegister(hr(mm.HR_T_INT_FORCED)),\n    forced_ext: fromRegister(hr(mm.HR_T_EXT_FORCED)),\n    fan_modes: FAN_MODE_REGISTERS.map((a) => FAN_MODE_NAMES[hr(a)] || \"auto\"),\n    emergency_stop: coil(mm.COIL_EMERGENCY_STOP),\n    fan_faults: FAN_FAULT_COILS.map((a) => coil(a)),\n    // Verrouillages de sécurité, déduits des alarmes mémorisées.\n    emergency_lock: Boolean(latched & (1 << mm.ALARM_EMERGENCY_STOP)),\n    fan_defects: [mm.ALARM_FAN_1, mm.ALARM_FAN_2, mm.ALARM_FAN_3, mm.ALARM_FAN_4].map((bit) => Boolean(latched & (1 << bit))),\n    settings: {\n        summer: [mm.HR_SUMMER_THRESHOLD_1, mm.HR_SUMMER_THRESHOLD_2, mm.HR_SUMMER_THRESHOLD_3].map(setting),\n        winter: [mm.HR_WINTER_THRESHOLD_1, mm.HR_WINTER_THRESHOLD_2, mm.HR_WINTER_THRESHOLD_3].map(setting),\n        winter_intake: setting(mm.HR_WINTER_INTAKE_THRESHOLD),\n        hysteresis: setting(mm.HR_HYSTERESIS),\n        t_int_high: setting(mm.HR_T_INT_HIGH_ALARM),\n    },\n    alarms: mm.ALARM_LABELS.map((label, bit) => ({\n        label,\n        active: Boolean(active & (1 << bit)),\n        latched: Boolean(latched & (1 << bit)),\n    })),\n    time: Date.now(),\n};\nihm.lastRead = ihm.state.time;\nnode.status({ fill: \"green\", shape: \"dot\", text: `T_int ${ihm.state.t_int.toFixed(1)} °C` });\nmsg.payload = ihm.state;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 560,
+        "y": 245,
+        "wires": [
+            [
+                "f0a1000000000104"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000106",
+        "type": "modbus-read",
+        "z": "f0a1000000000101",
+        "name": "Lire commandes (FC1)",
+        "topic": "coils",
+        "showStatusActivities": false,
+        "logIOActivities": false,
+        "showErrors": false,
+        "showWarnings": true,
+        "unitid": "1",
+        "dataType": "Coil",
+        "adr": "0",
+        "quantity": "10",
+        "rate": "500",
+        "rateUnit": "ms",
+        "delayOnStart": true,
+        "startDelayTime": "1",
+        "server": "f0a1000000000100",
+        "useIOFile": false,
+        "ioFile": "",
+        "useIOForPayload": false,
+        "emptyMsgOnFail": false,
+        "keepMsgProperties": false,
+        "x": 230,
+        "y": 170,
+        "wires": [
+            [
+                "f0a1000000000105"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "f0a1000000000107",
+        "type": "modbus-read",
+        "z": "f0a1000000000101",
+        "name": "Lire ventilateurs (FC2)",
+        "topic": "fans",
+        "showStatusActivities": false,
+        "logIOActivities": false,
+        "showErrors": false,
+        "showWarnings": true,
+        "unitid": "1",
+        "dataType": "Input",
+        "adr": "0",
+        "quantity": "4",
+        "rate": "500",
+        "rateUnit": "ms",
+        "delayOnStart": true,
+        "startDelayTime": "1",
+        "server": "f0a1000000000100",
+        "useIOFile": false,
+        "ioFile": "",
+        "useIOForPayload": false,
+        "emptyMsgOnFail": false,
+        "keepMsgProperties": false,
+        "x": 230,
+        "y": 220,
+        "wires": [
+            [
+                "f0a1000000000105"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "f0a1000000000108",
+        "type": "modbus-read",
+        "z": "f0a1000000000101",
+        "name": "Lire forçages, modes, réglages (FC3)",
+        "topic": "holding",
+        "showStatusActivities": false,
+        "logIOActivities": false,
+        "showErrors": false,
+        "showWarnings": true,
+        "unitid": "1",
+        "dataType": "HoldingRegister",
+        "adr": "0",
+        "quantity": "15",
+        "rate": "500",
+        "rateUnit": "ms",
+        "delayOnStart": true,
+        "startDelayTime": "1",
+        "server": "f0a1000000000100",
+        "useIOFile": false,
+        "ioFile": "",
+        "useIOForPayload": false,
+        "emptyMsgOnFail": false,
+        "keepMsgProperties": false,
+        "x": 230,
+        "y": 270,
+        "wires": [
+            [
+                "f0a1000000000105"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "f0a1000000000109",
+        "type": "modbus-read",
+        "z": "f0a1000000000101",
+        "name": "Lire capteurs et alarmes (FC4)",
+        "topic": "inputs",
+        "showStatusActivities": false,
+        "logIOActivities": false,
+        "showErrors": false,
+        "showWarnings": true,
+        "unitid": "1",
+        "dataType": "InputRegister",
+        "adr": "0",
+        "quantity": "4",
+        "rate": "500",
+        "rateUnit": "ms",
+        "delayOnStart": true,
+        "startDelayTime": "1",
+        "server": "f0a1000000000100",
+        "useIOFile": false,
+        "ioFile": "",
+        "useIOForPayload": false,
+        "emptyMsgOnFail": false,
+        "keepMsgProperties": false,
+        "x": 230,
+        "y": 320,
+        "wires": [
+            [
+                "f0a1000000000105"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "f0a100000000010a",
+        "type": "function",
+        "z": "f0a1000000000101",
+        "name": "Surveillance de la liaison",
+        "func": "// Chaque seconde : sans lecture réussie depuis 2 s, l'automate est déclaré\n// injoignable, et les pages affichent la perte de liaison.\nconst ihm = global.get(\"ihm\");\nif (Date.now() - ihm.lastRead > 2000) {\n    if (ihm.state.connected) node.warn(\"Automate injoignable, nouvelle tentative...\");\n    ihm.state = { connected: false, error: \"automate injoignable\" };\n    ihm.broadcast();\n    node.status({ fill: \"red\", shape: \"ring\", text: \"automate injoignable\" });\n} else {\n    node.status({ fill: \"green\", shape: \"dot\", text: \"liaison OK\" });\n}\nreturn null;",
+        "outputs": 0,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 460,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "f0a100000000010b",
+        "type": "inject",
+        "z": "f0a1000000000101",
+        "name": "chaque seconde",
+        "props": [],
+        "repeat": "1",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "x": 190,
+        "y": 400,
+        "wires": [
+            [
+                "f0a100000000010a"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000010c",
+        "type": "tab",
+        "label": "Commandes",
+        "disabled": false,
+        "info": "Commandes envoyées par la page : vérification des droits et des valeurs, puis écriture dans l'automate."
+    },
+    {
+        "id": "f0a100000000010d",
+        "type": "http response",
+        "z": "f0a100000000010c",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 1180,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "f0a100000000010e",
+        "type": "modbus-flex-write",
+        "z": "f0a100000000010c",
+        "name": "Écrire dans l'automate",
+        "showStatusActivities": false,
+        "showErrors": true,
+        "showWarnings": true,
+        "server": "f0a1000000000100",
+        "emptyMsgOnFail": false,
+        "keepMsgProperties": true,
+        "delayOnStart": false,
+        "startDelayTime": "",
+        "x": 1150,
+        "y": 220,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "f0a100000000010f",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Écriture suivante / réponse",
+        "func": "// Envoie une à une les écritures préparées par la commande (msg.writes) au bloc\n// « Écrire dans l'automate », qui renvoie ici après chaque écriture réussie.\n// Quand tout est écrit : trace les actions au journal et répond à la page.\n// Sortie 1 : écriture Modbus suivante. Sortie 2 : réponse à la page.\nconst ihm = global.get(\"ihm\");\n\nif (msg.error) {\n    // Échec d'une écriture, remonté par le bloc « catch ».\n    return [null, ihm.reply(msg, 400, { ok: false, error: msg.error.message || \"écriture refusée par l'automate\" })];\n}\nif (msg.writes.length) {\n    if (!ihm.state.connected) return [null, ihm.reply(msg, 400, { ok: false, error: \"automate injoignable\" })];\n    msg.payload = { ...msg.writes.shift(), unitid: ihm.mm.DEVICE_ID };\n    return [msg, null];\n}\nfor (const label of msg.actions) ihm.logAction(msg.user, label);\nreturn [null, ihm.reply(msg, 200, { ok: true })];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 870,
+        "y": 300,
+        "wires": [
+            [
+                "f0a100000000010e"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000110",
+        "type": "catch",
+        "z": "f0a100000000010c",
+        "name": "Écriture refusée",
+        "scope": [
+            "f0a100000000010e"
+        ],
+        "uncaught": false,
+        "x": 860,
+        "y": 380,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000111",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Mode été / hiver",
+        "func": "// POST api/mode { summer } : passage en mode été / hiver (opérateur).\n// Sortie 1 : écritures Modbus à faire. Sortie 2 : réponse d'erreur à la page.\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\ntry {\n    msg.user = ihm.requireRole(msg.req, \"operator\");\n    const { summer } = msg.payload;\n    if (typeof summer !== \"boolean\") throw new Error(\"'summer' doit etre true ou false\");\n    msg.writes = [{ fc: 5, address: mm.COIL_SUMMER_MODE, quantity: 1, value: summer }];\n    msg.actions = [summer ? \"Passage en mode été\" : \"Passage en mode hiver\"];\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 60,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000112",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/mode",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 60,
+        "wires": [
+            [
+                "f0a1000000000111"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000113",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Forçage des températures",
+        "func": "// POST api/force { t_int?, t_ext? } : forçage d'une température, ou relâchement\n// avec null (administrateur).\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\nconst toRegister = global.get(\"toRegister\");\nconst T_MIN = -50;\nconst T_MAX = 100;\n\nfunction checkTemperature(value) {\n    if (value === null) return null;\n    if (typeof value !== \"number\" || !Number.isFinite(value) || value < T_MIN || value > T_MAX) {\n        throw new Error(`temperature invalide (attendu un nombre entre ${T_MIN} et ${T_MAX}, ou null)`);\n    }\n    return value;\n}\n\n// Valeur -> registre de forçage puis coil à true ; null -> coil à false.\nfunction force(name, coil, register, value) {\n    if (value !== null) msg.writes.push({ fc: 6, address: register, quantity: 1, value: toRegister(value) });\n    msg.writes.push({ fc: 5, address: coil, quantity: 1, value: value !== null });\n    msg.actions.push(value === null ? `Forçage ${name} relâché` : `Forçage ${name} à ${value.toFixed(1)} °C`);\n}\n\ntry {\n    msg.user = ihm.requireRole(msg.req, \"admin\");\n    const body = msg.payload;\n    msg.writes = [];\n    msg.actions = [];\n    if (\"t_int\" in body) force(\"T_int\", mm.COIL_FORCE_T_INT, mm.HR_T_INT_FORCED, checkTemperature(body.t_int));\n    if (\"t_ext\" in body) force(\"T_ext\", mm.COIL_FORCE_T_EXT, mm.HR_T_EXT_FORCED, checkTemperature(body.t_ext));\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 120,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000114",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/force",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 120,
+        "wires": [
+            [
+                "f0a1000000000113"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000115",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Mode d'un ventilateur",
+        "func": "// POST api/fan-mode { fan, mode } : mode auto / marche / arrêt d'un ventilateur (opérateur).\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\nconst FAN_MODES = { auto: mm.FAN_MODE_AUTO, on: mm.FAN_MODE_MANUAL_ON, off: mm.FAN_MODE_MANUAL_OFF };\nconst FAN_MODE_LABELS = { auto: \"auto\", on: \"manuel marche\", off: \"manuel arrêt\" };\nconst FAN_MODE_REGISTERS = [mm.HR_FAN_MODE_1, mm.HR_FAN_MODE_2, mm.HR_FAN_MODE_3, mm.HR_FAN_MODE_4];\ntry {\n    msg.user = ihm.requireRole(msg.req, \"operator\");\n    const { fan, mode } = msg.payload;\n    if (!(mode in FAN_MODES)) throw new Error(\"'mode' doit valoir auto, on ou off\");\n    if (![1, 2, 3, 4].includes(fan)) throw new Error(\"'fan' doit valoir 1, 2, 3 ou 4\");\n    msg.writes = [{ fc: 6, address: FAN_MODE_REGISTERS[fan - 1], quantity: 1, value: FAN_MODES[mode] }];\n    msg.actions = [`V${fan} en mode ${FAN_MODE_LABELS[mode]}`];\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 180,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000116",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/fan-mode",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 180,
+        "wires": [
+            [
+                "f0a1000000000115"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000117",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Arrêt d'urgence",
+        "func": "// POST api/emergency-stop { pressed } : enfonce ou relâche l'arrêt d'urgence.\n// Accessible sans connexion : un arrêt d'urgence ne doit jamais être bloqué.\n// Le relâcher ne relance rien : le réarmement passe par l'acquittement.\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\ntry {\n    const { pressed } = msg.payload;\n    if (typeof pressed !== \"boolean\") throw new Error(\"'pressed' doit etre true ou false\");\n    msg.user = ihm.currentUser(msg.req);\n    // Noté pour le mail d'alerte, qui indique qui a déclenché l'arrêt.\n    if (pressed) ihm.lastEmergencyPress = { user: msg.user ? msg.user.name : \"non connecté\", time: Date.now() };\n    msg.writes = [{ fc: 5, address: mm.COIL_EMERGENCY_STOP, quantity: 1, value: pressed }];\n    msg.actions = [pressed ? \"Arrêt d'urgence enfoncé\" : \"Arrêt d'urgence relâché\"];\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 240,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000118",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/emergency-stop",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 240,
+        "wires": [
+            [
+                "f0a1000000000117"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000119",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Acquittement",
+        "func": "// POST api/ack : acquittement des alarmes (opérateur). Impulsion remise à\n// false par l'automate.\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\ntry {\n    msg.user = ihm.requireRole(msg.req, \"operator\");\n    msg.writes = [{ fc: 5, address: mm.COIL_ACK, quantity: 1, value: true }];\n    msg.actions = [\"Acquittement demandé\"];\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 300,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000011a",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/ack",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 300,
+        "wires": [
+            [
+                "f0a1000000000119"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000011b",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Panne simulée",
+        "func": "// POST api/fan-fault { fan, fault } : panne moteur simulée (administrateur).\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\nconst FAN_FAULT_COILS = [mm.COIL_FAN_FAULT_1, mm.COIL_FAN_FAULT_2, mm.COIL_FAN_FAULT_3, mm.COIL_FAN_FAULT_4];\ntry {\n    msg.user = ihm.requireRole(msg.req, \"admin\");\n    const { fan, fault } = msg.payload;\n    if (![1, 2, 3, 4].includes(fan)) throw new Error(\"'fan' doit valoir 1, 2, 3 ou 4\");\n    if (typeof fault !== \"boolean\") throw new Error(\"'fault' doit etre true ou false\");\n    msg.writes = [{ fc: 5, address: FAN_FAULT_COILS[fan - 1], quantity: 1, value: fault }];\n    msg.actions = [`Panne simulée V${fan} ${fault ? \"activée\" : \"retirée\"}`];\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 360,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000011c",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/fan-fault",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 360,
+        "wires": [
+            [
+                "f0a100000000011b"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000011d",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Réglages des seuils",
+        "func": "// POST api/settings : tous les réglages en une seule écriture (FC16), car\n// l'automate vérifie la cohérence de l'ensemble (administrateur).\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\nconst toRegister = global.get(\"toRegister\");\n\n// Registre, libellé du journal, et lecture dans l'objet échangé avec la page\n// { summer: [v1, v2, v3], winter: [...], winter_intake, hysteresis, t_int_high }.\nconst SETTINGS = [\n    ...[1, 2, 3].map((n) => ({ address: mm[`HR_SUMMER_THRESHOLD_${n}`], label: `Seuil V${n} été`, get: (s) => s.summer[n - 1] })),\n    ...[1, 2, 3].map((n) => ({ address: mm[`HR_WINTER_THRESHOLD_${n}`], label: `Seuil V${n} hiver`, get: (s) => s.winter[n - 1] })),\n    { address: mm.HR_WINTER_INTAKE_THRESHOLD, label: \"Seuil insufflation V4 hiver\", get: (s) => s.winter_intake },\n    { address: mm.HR_HYSTERESIS, label: \"Hystérésis\", get: (s) => s.hysteresis },\n    { address: mm.HR_T_INT_HIGH_ALARM, label: \"Seuil alarme haute\", get: (s) => s.t_int_high },\n];\n\n// Mêmes règles que Settings.errors() dans automate.py : on les vérifie ici pour\n// répondre un message clair, l'automate refusant de toute façon un réglage incohérent.\nfunction checkSettings(body) {\n    const isNumber = (v) => typeof v === \"number\" && Number.isFinite(v);\n    const inRange = (v, min, max) => isNumber(v) && v >= min && v <= max;\n    const s = {\n        summer: body.summer,\n        winter: body.winter,\n        winter_intake: body.winter_intake,\n        hysteresis: body.hysteresis,\n        t_int_high: body.t_int_high,\n    };\n    for (const season of [\"summer\", \"winter\"]) {\n        const name = season === \"summer\" ? \"été\" : \"hiver\";\n        const v = s[season];\n        if (!Array.isArray(v) || v.length !== 3 || !v.every((t) => inRange(t, mm.SETPOINT_MIN, mm.SETPOINT_MAX))) {\n            throw new Error(`seuils ${name} : 3 valeurs entre ${mm.SETPOINT_MIN} et ${mm.SETPOINT_MAX} °C attendues`);\n        }\n        if (!(v[0] <= v[1] && v[1] <= v[2])) throw new Error(`seuils ${name} : il faut V1 ≤ V2 ≤ V3`);\n    }\n    for (const [key, name] of [[\"winter_intake\", \"seuil insufflation V4 hiver\"], [\"t_int_high\", \"seuil alarme haute\"]]) {\n        if (!inRange(s[key], mm.SETPOINT_MIN, mm.SETPOINT_MAX)) {\n            throw new Error(`${name} : valeur entre ${mm.SETPOINT_MIN} et ${mm.SETPOINT_MAX} °C attendue`);\n        }\n    }\n    if (!inRange(s.hysteresis, mm.HYSTERESIS_MIN, mm.HYSTERESIS_MAX)) {\n        throw new Error(`hystérésis : valeur entre ${mm.HYSTERESIS_MIN} et ${mm.HYSTERESIS_MAX} °C attendue`);\n    }\n    // Arrondi au dixième, la précision des registres.\n    const round = (v) => Math.round(v * mm.TEMPERATURE_SCALE) / mm.TEMPERATURE_SCALE;\n    return {\n        summer: s.summer.map(round),\n        winter: s.winter.map(round),\n        winter_intake: round(s.winter_intake),\n        hysteresis: round(s.hysteresis),\n        t_int_high: round(s.t_int_high),\n    };\n}\n\ntry {\n    msg.user = ihm.requireRole(msg.req, \"admin\");\n    if (!ihm.state.connected) throw new Error(\"automate injoignable\");\n    const settings = checkSettings(msg.payload);\n    const before = ihm.state.settings;\n    const values = new Array(mm.HR_SETTINGS_COUNT).fill(0);\n    for (const s of SETTINGS) values[s.address - mm.HR_SETTINGS_START] = toRegister(s.get(settings));\n    msg.writes = [{ fc: 16, address: mm.HR_SETTINGS_START, quantity: mm.HR_SETTINGS_COUNT, value: values }];\n    msg.actions = SETTINGS.filter((s) => s.get(settings) !== s.get(before))\n        .map((s) => `${s.label} : de ${s.get(before).toFixed(1)} à ${s.get(settings).toFixed(1)} °C`);\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 420,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000011e",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/settings",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 420,
+        "wires": [
+            [
+                "f0a100000000011d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000011f",
+        "type": "function",
+        "z": "f0a100000000010c",
+        "name": "Réglages par défaut",
+        "func": "// POST api/settings/defaults : retour aux réglages par défaut (administrateur).\n// L'automate connaît seul les valeurs par défaut : on lui envoie la commande,\n// une impulsion qu'il remet à false.\nconst ihm = global.get(\"ihm\");\nconst mm = ihm.mm;\ntry {\n    msg.user = ihm.requireRole(msg.req, \"admin\");\n    if (!ihm.state.connected) throw new Error(\"automate injoignable\");\n    msg.writes = [{ fc: 5, address: mm.COIL_RESTORE_DEFAULTS, quantity: 1, value: true }];\n    msg.actions = [\"Retour aux réglages par défaut\"];\n    return [msg, null];\n} catch (err) {\n    return [null, ihm.replyError(msg, err)];\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 480,
+        "wires": [
+            [
+                "f0a100000000010f"
+            ],
+            [
+                "f0a100000000010d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000120",
+        "type": "http in",
+        "z": "f0a100000000010c",
+        "name": "",
+        "url": "/api/settings/defaults",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 480,
+        "wires": [
+            [
+                "f0a100000000011f"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000121",
+        "type": "tab",
+        "label": "Pages et accès",
+        "disabled": false,
+        "info": "Pages de l'IHM (ihm/public), flux temps réel, connexion opérateur / administrateur, rapport PDF et alertes mail."
+    },
+    {
+        "id": "f0a1000000000122",
+        "type": "http response",
+        "z": "f0a1000000000121",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 900,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "f0a1000000000123",
+        "type": "function",
+        "z": "f0a1000000000121",
+        "name": "Pages de l'IHM",
+        "func": "// Sert les pages de l'IHM, les mêmes fichiers que ihm/server.js (ihm/public).\nconst fs = global.get(\"fs\");\nconst path = global.get(\"path\");\nconst FILES = {\n    \"/\": [\"index.html\", \"text/html; charset=utf-8\"],\n    \"/alertes\": [\"alertes.html\", \"text/html; charset=utf-8\"],\n    \"/common.css\": [\"common.css\", \"text/css; charset=utf-8\"],\n};\n// Les pages utilisent des adresses relatives : la supervision doit être\n// ouverte avec la barre finale (/ihm/ et non /ihm).\nconst url = msg.req.originalUrl.split(\"?\")[0];\nif (msg.req.route.path === \"/\" && !url.endsWith(\"/\")) {\n    msg.statusCode = 301;\n    msg.headers = { Location: url + \"/\" };\n    msg.payload = \"\";\n    return msg;\n}\nconst [file, type] = FILES[msg.req.route.path];\nmsg.statusCode = 200;\nmsg.headers = { \"Content-Type\": type, \"Cache-Control\": \"no-cache\" };\nmsg.payload = fs.readFileSync(path.join(global.get(\"publicDir\"), file), \"utf8\");\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 60,
+        "wires": [
+            [
+                "f0a1000000000122"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000124",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 60,
+        "wires": [
+            [
+                "f0a1000000000123"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000125",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/alertes",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 110,
+        "wires": [
+            [
+                "f0a1000000000123"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000126",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/common.css",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 160,
+        "wires": [
+            [
+                "f0a1000000000123"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000127",
+        "type": "function",
+        "z": "f0a1000000000121",
+        "name": "Flux temps réel",
+        "func": "// GET events : flux temps réel (Server-Sent Events). La connexion reste\n// ouverte, et « Outils partagés » y écrit l'état à chaque lecture de l'automate.\nconst ihm = global.get(\"ihm\");\nconst res = msg.res._res;\nres.writeHead(200, {\n    \"Content-Type\": \"text/event-stream\",\n    \"Cache-Control\": \"no-cache\",\n    Connection: \"keep-alive\",\n});\nres.write(`data: ${JSON.stringify({ ...ihm.state, journal: ihm.journal })}\\n\\n`);\nihm.sseClients.add(res);\nmsg.req.on(\"close\", () => ihm.sseClients.delete(res));\nnode.status({ text: `${ihm.sseClients.size} page(s) ouverte(s)` });\nreturn null;",
+        "outputs": 0,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 210,
+        "wires": []
+    },
+    {
+        "id": "f0a1000000000128",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/events",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 210,
+        "wires": [
+            [
+                "f0a1000000000127"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000129",
+        "type": "function",
+        "z": "f0a1000000000121",
+        "name": "Session en cours",
+        "func": "// GET api/session : utilisateur connecté, ou null.\nconst ihm = global.get(\"ihm\");\nreturn ihm.reply(msg, 200, { ok: true, user: ihm.sessionInfo(ihm.currentUser(msg.req)) });",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 260,
+        "wires": [
+            [
+                "f0a1000000000122"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000012a",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/session",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 260,
+        "wires": [
+            [
+                "f0a1000000000129"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000012b",
+        "type": "function",
+        "z": "f0a1000000000121",
+        "name": "Connexion",
+        "func": "// POST api/login { username, password } : ouvre une session (cookie).\nconst ihm = global.get(\"ihm\");\ntry {\n    const { username, password } = msg.payload || {};\n    const { user, cookie } = ihm.login(String(username || \"\"), String(password || \"\"));\n    ihm.logAction(user, \"Connexion\");\n    return ihm.reply(msg, 200, { ok: true, user: ihm.sessionInfo(user) }, { \"Set-Cookie\": cookie });\n} catch (err) {\n    return ihm.replyError(msg, err);\n}",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 310,
+        "wires": [
+            [
+                "f0a1000000000122"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000012c",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/login",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 310,
+        "wires": [
+            [
+                "f0a100000000012b"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000012d",
+        "type": "function",
+        "z": "f0a1000000000121",
+        "name": "Déconnexion",
+        "func": "// POST api/logout : ferme la session.\nconst ihm = global.get(\"ihm\");\nconst user = ihm.currentUser(msg.req);\nconst cookie = ihm.logout(msg.req);\nif (user) ihm.logAction(user, \"Déconnexion\");\nreturn ihm.reply(msg, 200, { ok: true }, { \"Set-Cookie\": cookie });",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 360,
+        "wires": [
+            [
+                "f0a1000000000122"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000012e",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/logout",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 360,
+        "wires": [
+            [
+                "f0a100000000012d"
+            ]
+        ]
+    },
+    {
+        "id": "f0a100000000012f",
+        "type": "function",
+        "z": "f0a1000000000121",
+        "name": "Rapport PDF",
+        "func": "// GET api/report.pdf : rapport d'alarmes en PDF (opérateur), produit par\n// ihm/report.js comme pour l'IHM web.\nconst ihm = global.get(\"ihm\");\nlet user;\ntry {\n    user = ihm.requireRole(msg.req, \"operator\");\n} catch (err) {\n    return ihm.replyError(msg, err);\n}\nconst res = msg.res._res;\nconst stamp = new Date().toISOString().slice(0, 16).replace(\"T\", \"_\").replace(\":\", \"h\");\nres.writeHead(200, {\n    \"Content-Type\": \"application/pdf\",\n    \"Content-Disposition\": `attachment; filename=\"rapport-alarmes_${stamp}.pdf\"`,\n});\nglobal.get(\"writeReport\")(res, {\n    state: ihm.state,\n    journal: ihm.journal,\n    startedAt: ihm.startedAt,\n    user,\n    journalSize: ihm.JOURNAL_SIZE,\n});\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 410,
+        "wires": [
+            [
+                "f0a1000000000122"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000130",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/report.pdf",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 410,
+        "wires": [
+            [
+                "f0a100000000012f"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000131",
+        "type": "function",
+        "z": "f0a1000000000121",
+        "name": "Alertes mail",
+        "func": "// Alertes par mail (administrateur) : destinataires et compte d'envoi, gérés\n// par ihm/alerts.js, comme pour l'IHM web (mêmes fichiers dans ihm/data).\n// msg.req.route.path indique la demande.\nconst ihm = global.get(\"ihm\");\nconst alerts = global.get(\"alerts\");\nconst route = msg.req.route.path;\nconst body = msg.payload || {};\n\nasync function handle() {\n    const user = ihm.requireRole(msg.req, \"admin\"); // adresses personnelles : visibles par l'admin seulement\n    switch (`${msg.req.method} ${route}`) {\n        case \"GET /api/alert-emails\":\n            return { ok: true, emails: alerts.getEmails(), account: alerts.accountStatus() };\n        case \"POST /api/alert-emails\": {\n            const email = alerts.addEmail(body.email);\n            ihm.logAction(user, `Destinataire d'alerte ajouté : ${email}`);\n            return { ok: true, emails: alerts.getEmails() };\n        }\n        case \"POST /api/alert-emails/delete\": {\n            const email = alerts.removeEmail(body.email);\n            ihm.logAction(user, `Destinataire d'alerte retiré : ${email}`);\n            return { ok: true, emails: alerts.getEmails() };\n        }\n        case \"POST /api/mail-account\": {\n            const result = await alerts.setAccount(body);\n            ihm.logAction(user, `Compte d'envoi des alertes : ${result.user}`);\n            return { ok: true, account: alerts.accountStatus() };\n        }\n        case \"POST /api/mail-account/delete\":\n            alerts.clearAccount();\n            ihm.logAction(user, \"Compte d'envoi des alertes supprimé\");\n            return { ok: true, account: alerts.accountStatus() };\n        case \"POST /api/alert-emails/test\": {\n            const n = await alerts.sendToAll(\n                \"[TEST] Alerte Ventilation\",\n                `Mail de test envoyé depuis l'IHM par ${user.name}.\\n\\n` +\n                    \"Ces adresses recevront un mail d'alerte à chaque arrêt d'urgence.\\n\\n\" +\n                    \"-- Message automatique de l'IHM Ventilation Modbus\"\n            );\n            ihm.logAction(user, `Mail de test envoyé à ${n} destinataire(s)`);\n            return { ok: true, sent: n };\n        }\n    }\n    throw ihm.httpError(404, \"introuvable\");\n}\n\nhandle()\n    .then((payload) => node.send(ihm.reply(msg, 200, payload)))\n    .catch((err) => node.send(ihm.replyError(msg, err)));\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 600,
+        "y": 460,
+        "wires": [
+            [
+                "f0a1000000000122"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000132",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/alert-emails",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 460,
+        "wires": [
+            [
+                "f0a1000000000131"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000133",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/alert-emails",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 510,
+        "wires": [
+            [
+                "f0a1000000000131"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000134",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/alert-emails/delete",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 560,
+        "wires": [
+            [
+                "f0a1000000000131"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000135",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/mail-account",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 610,
+        "wires": [
+            [
+                "f0a1000000000131"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000136",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/mail-account/delete",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 660,
+        "wires": [
+            [
+                "f0a1000000000131"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000137",
+        "type": "http in",
+        "z": "f0a1000000000121",
+        "name": "",
+        "url": "/api/alert-emails/test",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 220,
+        "y": 710,
+        "wires": [
+            [
+                "f0a1000000000131"
+            ]
+        ]
+    },
+    {
+        "id": "f0a1000000000138",
         "type": "ui-base",
         "name": "Ventilation",
         "path": "/dashboard",
@@ -46,41 +1067,41 @@
         ],
         "showPathInSidebar": false,
         "headerContent": "page",
-        "navigationStyle": "default",
-        "titleBarStyle": "default",
+        "navigationStyle": "none",
+        "titleBarStyle": "hidden",
         "showReconnectNotification": true,
         "notificationDisplayTime": 1,
         "showDisconnectNotification": true,
         "allowInstall": false
     },
     {
-        "id": "f0a1000000000004",
+        "id": "f0a1000000000139",
         "type": "ui-theme",
-        "name": "Thème ventilation",
+        "name": "Plein écran",
         "colors": {
-            "surface": "#fcfcfd",
-            "primary": "#0d74ce",
-            "bgPage": "#f9f9fb",
-            "groupBg": "#ffffff",
-            "groupOutline": "#d9d9e0"
+            "surface": "#ffffff",
+            "primary": "#2563eb",
+            "bgPage": "#f3f4f6",
+            "groupBg": "#f3f4f6",
+            "groupOutline": "#f3f4f6"
         },
         "sizes": {
             "density": "default",
-            "pagePadding": "12px",
-            "groupGap": "12px",
-            "groupBorderRadius": "4px",
-            "widgetGap": "12px"
+            "pagePadding": "0px",
+            "groupGap": "0px",
+            "groupBorderRadius": "0px",
+            "widgetGap": "0px"
         }
     },
     {
-        "id": "f0a1000000000005",
+        "id": "f0a100000000013a",
         "type": "ui-page",
-        "name": "Supervision",
-        "ui": "f0a1000000000003",
-        "path": "/supervision",
+        "name": "IHM",
+        "ui": "f0a1000000000138",
+        "path": "/ihm",
         "icon": "fan",
         "layout": "grid",
-        "theme": "f0a1000000000004",
+        "theme": "f0a1000000000139",
         "breakpoints": [
             {
                 "name": "Default",
@@ -110,14 +1131,14 @@
         "disabled": "false"
     },
     {
-        "id": "f0a1000000000006",
+        "id": "f0a100000000013b",
         "type": "ui-group",
-        "name": "Ventilateurs",
-        "page": "f0a1000000000005",
-        "width": 6,
+        "name": "IHM",
+        "page": "f0a100000000013a",
+        "width": 12,
         "height": 1,
         "order": 1,
-        "showTitle": true,
+        "showTitle": false,
         "className": "",
         "visible": "true",
         "disabled": "false",
@@ -125,544 +1146,51 @@
         "tab": ""
     },
     {
-        "id": "f0a1000000000007",
-        "type": "ui-group",
-        "name": "Températures",
-        "page": "f0a1000000000005",
-        "width": 6,
-        "height": 1,
-        "order": 2,
-        "showTitle": true,
-        "className": "",
-        "visible": "true",
-        "disabled": "false",
-        "groupType": "default",
-        "tab": ""
-    },
-    {
-        "id": "f0a1000000000008",
-        "type": "ui-group",
-        "name": "Alarmes",
-        "page": "f0a1000000000005",
-        "width": 6,
-        "height": 1,
-        "order": 3,
-        "showTitle": true,
-        "className": "",
-        "visible": "true",
-        "disabled": "false",
-        "groupType": "default",
-        "tab": ""
-    },
-    {
-        "id": "f0a1000000000009",
-        "type": "ui-group",
-        "name": "Commandes",
-        "page": "f0a1000000000005",
-        "width": 6,
-        "height": 1,
-        "order": 4,
-        "showTitle": true,
-        "className": "",
-        "visible": "true",
-        "disabled": "false",
-        "groupType": "default",
-        "tab": ""
-    },
-    {
-        "id": "f0a100000000000a",
-        "type": "comment",
-        "z": "f0a1000000000001",
-        "name": "IHM : http://localhost:1880/dashboard (onglet Dashboard 2.0 → Open Dashboard)",
-        "info": "L'IHM s'ouvre depuis la barre latérale de droite : onglet **Dashboard 2.0** (icône graphique), bouton **Open Dashboard**.",
-        "x": 340,
-        "y": 40,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000100",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000006",
+        "id": "f0a100000000013c",
+        "type": "ui-template",
+        "z": "f0a1000000000121",
+        "group": "f0a100000000013b",
+        "page": "",
+        "ui": "",
+        "name": "IHM dans le tableau de bord",
         "order": 1,
         "width": 0,
         "height": 0,
-        "name": "",
-        "label": "V1 (extraction)",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 120,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000101",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000006",
-        "order": 2,
-        "width": 0,
-        "height": 0,
-        "name": "",
-        "label": "V2 (extraction)",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 160,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000102",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000006",
-        "order": 3,
-        "width": 0,
-        "height": 0,
-        "name": "",
-        "label": "V3 (extraction)",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 200,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000103",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000006",
-        "order": 4,
-        "width": 0,
-        "height": 0,
-        "name": "",
-        "label": "V4 (insufflation)",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 240,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000104",
-        "type": "function",
-        "z": "f0a1000000000001",
-        "name": "Marche / arrêt",
-        "func": "return msg.payload.slice(0, 4).map(on => ({ payload: on ? \"En marche\" : \"Arrêt\" }));",
-        "outputs": 4,
-        "timeout": 0,
-        "noerr": 0,
-        "initialize": "",
-        "finalize": "",
-        "libs": [],
-        "x": 480,
-        "y": 120,
-        "wires": [
-            [
-                "f0a1000000000100"
-            ],
-            [
-                "f0a1000000000101"
-            ],
-            [
-                "f0a1000000000102"
-            ],
-            [
-                "f0a1000000000103"
-            ]
-        ]
-    },
-    {
-        "id": "f0a1000000000105",
-        "type": "modbus-read",
-        "z": "f0a1000000000001",
-        "name": "Lire ventilateurs (FC2)",
-        "topic": "",
-        "showStatusActivities": false,
-        "logIOActivities": false,
-        "showErrors": true,
-        "showWarnings": true,
-        "unitid": "1",
-        "dataType": "Input",
-        "adr": "0",
-        "quantity": "4",
-        "rate": "1",
-        "rateUnit": "s",
-        "delayOnStart": true,
-        "startDelayTime": "1",
-        "server": "f0a1000000000002",
-        "useIOFile": false,
-        "ioFile": "",
-        "useIOForPayload": false,
-        "emptyMsgOnFail": false,
-        "keepMsgProperties": false,
-        "x": 200,
-        "y": 120,
-        "wires": [
-            [
-                "f0a1000000000104"
-            ],
-            []
-        ]
-    },
-    {
-        "id": "f0a1000000000106",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000007",
-        "order": 1,
-        "width": 0,
-        "height": 0,
-        "name": "",
-        "label": "Intérieure",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 340,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000107",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000007",
-        "order": 2,
-        "width": 0,
-        "height": 0,
-        "name": "",
-        "label": "Extérieure",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 380,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000108",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000008",
-        "order": 1,
-        "width": 0,
-        "height": 0,
-        "name": "",
-        "label": "Actives",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 420,
-        "wires": []
-    },
-    {
-        "id": "f0a1000000000109",
-        "type": "ui-text",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000008",
-        "order": 2,
-        "width": 0,
-        "height": 0,
-        "name": "",
-        "label": "À acquitter",
-        "format": "{{msg.payload}}",
-        "layout": "row-spread",
-        "style": false,
-        "font": "",
-        "fontSize": 16,
-        "color": "#717171",
-        "wrapText": false,
-        "className": "",
-        "value": "payload",
-        "valueType": "msg",
-        "x": 760,
-        "y": 460,
-        "wires": []
-    },
-    {
-        "id": "f0a100000000010a",
-        "type": "function",
-        "z": "f0a1000000000001",
-        "name": "Températures et alarmes",
-        "func": "// Registres 16 bits signés (complément à deux), en dixièmes de degré.\nconst SCALE = 10;\nconst LABELS = [\"Arrêt d'urgence\",\"Température intérieure haute\",\"Défaut capteur T_int\",\"Défaut capteur T_ext\",\"Défaut rotation V1\",\"Défaut rotation V2\",\"Défaut rotation V3\",\"Défaut rotation V4\"];\nconst temp = (raw) => ((raw >= 0x8000 ? raw - 0x10000 : raw) / SCALE).toFixed(1) + \" °C\";\nconst alarms = (word) => LABELS.filter((_, bit) => word & (1 << bit)).join(\", \") || \"Aucune\";\nconst r = msg.payload;\nreturn [\n    { payload: temp(r[0]) },\n    { payload: temp(r[1]) },\n    { payload: alarms(r[2]) },\n    { payload: alarms(r[3]) },\n];",
-        "outputs": 4,
-        "timeout": 0,
-        "noerr": 0,
-        "initialize": "",
-        "finalize": "",
-        "libs": [],
-        "x": 480,
-        "y": 340,
-        "wires": [
-            [
-                "f0a1000000000106"
-            ],
-            [
-                "f0a1000000000107"
-            ],
-            [
-                "f0a1000000000108"
-            ],
-            [
-                "f0a1000000000109"
-            ]
-        ]
-    },
-    {
-        "id": "f0a100000000010b",
-        "type": "modbus-read",
-        "z": "f0a1000000000001",
-        "name": "Lire capteurs et alarmes (FC4)",
-        "topic": "",
-        "showStatusActivities": false,
-        "logIOActivities": false,
-        "showErrors": true,
-        "showWarnings": true,
-        "unitid": "1",
-        "dataType": "InputRegister",
-        "adr": "0",
-        "quantity": "4",
-        "rate": "1",
-        "rateUnit": "s",
-        "delayOnStart": true,
-        "startDelayTime": "1",
-        "server": "f0a1000000000002",
-        "useIOFile": false,
-        "ioFile": "",
-        "useIOForPayload": false,
-        "emptyMsgOnFail": false,
-        "keepMsgProperties": false,
-        "x": 200,
-        "y": 340,
-        "wires": [
-            [
-                "f0a100000000010a"
-            ],
-            []
-        ]
-    },
-    {
-        "id": "f0a100000000010c",
-        "type": "modbus-write",
-        "z": "f0a1000000000001",
-        "name": "Écrire arrêt d'urgence (FC5)",
-        "showStatusActivities": false,
-        "showErrors": true,
-        "showWarnings": true,
-        "unitid": "1",
-        "dataType": "Coil",
-        "adr": "3",
-        "quantity": "1",
-        "server": "f0a1000000000002",
-        "emptyMsgOnFail": false,
-        "keepMsgProperties": false,
-        "x": 1060,
-        "y": 560,
-        "wires": [
-            [],
-            []
-        ]
-    },
-    {
-        "id": "f0a100000000010d",
-        "type": "ui-switch",
-        "z": "f0a1000000000001",
-        "name": "",
-        "label": "Arrêt d'urgence",
-        "group": "f0a1000000000009",
-        "order": 1,
-        "width": 0,
-        "height": 0,
+        "head": "",
+        "format": "<template>\n  <iframe src=\"/ihm/\" title=\"IHM ventilation\"></iframe>\n</template>\n\n<style scoped>\niframe { display: block; width: 100%; height: 100vh; border: 0; }\n</style>\n",
+        "storeOutMessages": true,
         "passthru": false,
-        "decouple": false,
-        "topic": "topic",
-        "topicType": "msg",
-        "style": "",
+        "resendOnRefresh": true,
+        "templateScope": "local",
         "className": "",
-        "layout": "row-spread",
-        "clickableArea": "switch",
-        "onvalue": "true",
-        "onvalueType": "bool",
-        "onicon": "",
-        "oncolor": "red",
-        "offvalue": "false",
-        "offvalueType": "bool",
-        "officon": "",
-        "offcolor": "",
-        "x": 780,
-        "y": 560,
+        "x": 640,
+        "y": 760,
         "wires": [
-            [
-                "f0a100000000010c"
-            ]
-        ]
-    },
-    {
-        "id": "f0a100000000010e",
-        "type": "function",
-        "z": "f0a1000000000001",
-        "name": "État arrêt d'urgence",
-        "func": "return { payload: msg.payload[3] };",
-        "outputs": 1,
-        "timeout": 0,
-        "noerr": 0,
-        "initialize": "",
-        "finalize": "",
-        "libs": [],
-        "x": 480,
-        "y": 560,
-        "wires": [
-            [
-                "f0a100000000010d"
-            ]
-        ]
-    },
-    {
-        "id": "f0a100000000010f",
-        "type": "modbus-read",
-        "z": "f0a1000000000001",
-        "name": "Lire commandes (FC1)",
-        "topic": "",
-        "showStatusActivities": false,
-        "logIOActivities": false,
-        "showErrors": true,
-        "showWarnings": true,
-        "unitid": "1",
-        "dataType": "Coil",
-        "adr": "0",
-        "quantity": "10",
-        "rate": "1",
-        "rateUnit": "s",
-        "delayOnStart": true,
-        "startDelayTime": "1",
-        "server": "f0a1000000000002",
-        "useIOFile": false,
-        "ioFile": "",
-        "useIOForPayload": false,
-        "emptyMsgOnFail": false,
-        "keepMsgProperties": false,
-        "x": 200,
-        "y": 560,
-        "wires": [
-            [
-                "f0a100000000010e"
-            ],
             []
         ]
     },
     {
-        "id": "f0a1000000000110",
-        "type": "modbus-write",
-        "z": "f0a1000000000001",
-        "name": "Écrire acquittement (FC5)",
-        "showStatusActivities": false,
-        "showErrors": true,
-        "showWarnings": true,
-        "unitid": "1",
-        "dataType": "Coil",
-        "adr": "4",
-        "quantity": "1",
-        "server": "f0a1000000000002",
-        "emptyMsgOnFail": false,
-        "keepMsgProperties": false,
-        "x": 1060,
-        "y": 620,
-        "wires": [
-            [],
-            []
-        ]
-    },
-    {
-        "id": "f0a1000000000111",
-        "type": "ui-button",
-        "z": "f0a1000000000001",
-        "group": "f0a1000000000009",
-        "name": "",
-        "label": "Acquitter",
-        "order": 2,
+        "id": "f0a100000000013d",
+        "type": "ui-template",
+        "z": "f0a1000000000121",
+        "group": "",
+        "page": "",
+        "ui": "f0a1000000000138",
+        "name": "Sans marges",
+        "order": 0,
         "width": 0,
         "height": 0,
-        "emulateClick": false,
-        "tooltip": "",
-        "color": "",
-        "bgcolor": "",
+        "head": "",
+        "format": ".nrdb-ui-group .v-card-text { padding: 0 !important; }\n.nrdb-ui-group > .v-card { border: 0 !important; }\n",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "site:style",
         "className": "",
-        "icon": "check",
-        "iconPosition": "left",
-        "payload": "true",
-        "payloadType": "bool",
-        "topic": "topic",
-        "topicType": "msg",
-        "buttonColor": "",
-        "textColor": "",
-        "iconColor": "",
-        "enableClick": true,
-        "enablePointerdown": false,
-        "pointerdownPayload": "",
-        "pointerdownPayloadType": "str",
-        "enablePointerup": false,
-        "pointerupPayload": "",
-        "pointerupPayloadType": "str",
-        "x": 780,
-        "y": 620,
+        "x": 610,
+        "y": 810,
         "wires": [
-            [
-                "f0a1000000000110"
-            ]
+            []
         ]
     }
 ]
