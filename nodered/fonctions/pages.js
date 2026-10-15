@@ -1,4 +1,4 @@
-// Sert les pages de l'IHM, les mêmes fichiers que ihm/server.js (ihm/public).
+// Sert les pages de l'IHM (public/).
 const fs = global.get("fs");
 const path = global.get("path");
 const FILES = {

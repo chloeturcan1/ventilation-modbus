@@ -1,6 +1,6 @@
-// Génère flows.json : l'IHM web (ihm/public) servie par Node-RED.
+// Génère flows.json : l'IHM de supervision (public/) servie par Node-RED.
 //
-// Les flux remplacent ihm/server.js, bloc par bloc :
+// Les flux, bloc par bloc :
 //   - onglet « Automate » : lectures Modbus, état, journal des alarmes, mail
 //     d'arrêt d'urgence, surveillance de la liaison ;
 //   - onglet « Commandes » : une entrée HTTP par commande de la page, puis
@@ -17,7 +17,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { map: mm } = require("../ihm/modbus_map");
+const { map: mm } = require("./modbus_map");
 
 const code = (file) => fs.readFileSync(path.join(__dirname, "fonctions", file), "utf8").trimEnd();
 
@@ -53,7 +53,7 @@ const CLIENT = add({
         "et les diffuse aux pages ouvertes.");
     comment(z, "IHM : http://localhost:1880/ihm/", 170, 40,
         "Ouvrir l'IHM : [http://localhost:1880/ihm/](http://localhost:1880/ihm/)\n\n" +
-        "Ce sont les pages de `ihm/public`, servies par ces flux au lieu de `ihm/server.js`.");
+        "Ce sont les pages de `nodered/public`, servies par ces flux.");
     add({
         type: "function", z, name: "Outils partagés", outputs: 0, timeout: 0, noerr: 0,
         func: "// Tout le travail est fait au démarrage : voir l'onglet « Au démarrage ».\nreturn null;",
@@ -115,7 +115,7 @@ const CLIENT = add({
 
 // --- Onglet « Pages et accès » -------------------------------------------------
 {
-    const z = tab("Pages et accès", "Pages de l'IHM (ihm/public), flux temps réel, connexion opérateur / " +
+    const z = tab("Pages et accès", "Pages de l'IHM (public/), flux temps réel, connexion opérateur / " +
         "administrateur, rapport PDF et alertes mail.");
     const response = httpOut(z, 900, 300);
     y = 60;

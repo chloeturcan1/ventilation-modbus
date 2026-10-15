@@ -1,8 +1,8 @@
 """Table d'échange Modbus de l'automate de ventilation.
 
 Seule source de vérité pour les adresses et les facteurs d'échelle : le serveur
-(server.py), le client (client.py) et l'IHM (ihm/modbus_map.js) lisent ce module, aucune
-adresse Modbus ne doit être écrite en dur ailleurs.
+(server.py), le client (client.py) et l'IHM Node-RED (nodered/modbus_map.js)
+lisent ce module, aucune adresse Modbus ne doit être écrite en dur ailleurs.
 
 Les températures sont transmises en dixièmes de degré, codées en entier signé
 16 bits (complément à deux) pour supporter les températures négatives

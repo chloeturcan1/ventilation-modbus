@@ -205,7 +205,7 @@
       <button class="btn" id="sound-btn" aria-pressed="true">Son : activé</button>
       <button class="btn" id="fullscreen-btn">Plein écran</button>
       <button class="btn" id="alerts-btn">Alertes mail</button>
-      <button class="btn" id="editor-btn" hidden>Éditeur Node-RED</button>
+      <button class="btn" id="editor-btn">Éditeur Node-RED</button>
     </div>
     <div class="user">
       <span class="who" id="who">Consultation seule</span>
@@ -850,9 +850,7 @@
     }
   });
 
-  // Page servie par Node-RED (sous /ihm/) : accès à l'éditeur de blocs, à la
-  // racine du même serveur. Absent de l'IHM web (ihm/server.js).
-  $("editor-btn").hidden = !location.pathname.startsWith("/ihm/");
+  // L'éditeur de blocs Node-RED est à la racine du même serveur.
   $("editor-btn").addEventListener("click", () => window.open("/", "nodered-editeur"));
 
   // --- Horloge (heure de l'ordinateur qui affiche la page) ---

@@ -2,9 +2,9 @@
 # Lance tout le projet en une commande : ./start.sh
 #
 # Fait les mêmes étapes que le tuto du README (voir « Tester le projet ») :
-#   1. arrête une version déjà lancée (ports 502 et 3000) ;
+#   1. arrête une version déjà lancée (ports 502 et 1880) ;
 #   2. récupère la dernière version (git pull) et installe les dépendances ;
-#   3. lance l'automate puis l'IHM, et ouvre la page dans le navigateur.
+#   3. lance l'automate puis l'IHM (Node-RED), et ouvre la page dans le navigateur.
 # Avec ./start.sh --test, lance aussi le test automatique (client.py).
 #
 # Les messages de l'automate et de l'IHM s'affichent ici, préfixés.
@@ -14,8 +14,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PLC_PORT=502
-IHM_PORT=3000
-URL="http://localhost:$IHM_PORT"
+IHM_PORT=1880
+URL="http://localhost:$IHM_PORT/ihm/"
 RUN_TEST=false
 [[ "${1:-}" == "--test" ]] && RUN_TEST=true
 
@@ -62,7 +62,7 @@ fi
 
 step "Installation des dépendances"
 uv sync --quiet
-(cd ihm && npm install --no-audit --no-fund --loglevel=error)
+(cd nodered && npm install --no-audit --no-fund --loglevel=error)
 echo "Dépendances à jour."
 
 # Ctrl+C ou fin du script : arrête l'automate et l'IHM lancés ici. Les programmes
@@ -82,8 +82,8 @@ PYTHONUNBUFFERED=1 uv run server.py 2>&1 | prefix "[automate]" &
 wait_port "$PLC_PORT" "L'automate" 20
 
 step "Lancement de l'IHM"
-(cd ihm && npm start --silent 2>&1 | prefix "[ihm]     ") &
-wait_port "$IHM_PORT" "L'IHM" 30
+(cd nodered && npm start --silent 2>&1 | prefix "[ihm]     ") &
+wait_port "$IHM_PORT" "L'IHM" 60
 
 if command -v open >/dev/null; then
   open "$URL"
@@ -92,6 +92,7 @@ elif command -v xdg-open >/dev/null; then
 fi
 
 printf '\n\033[32mTout tourne.\033[0m IHM : %s (recharge avec Cmd+Shift+R)\n' "$URL"
+echo "Éditeur de blocs Node-RED : http://localhost:$IHM_PORT"
 echo "Comptes : operateur / operateur, admin / admin."
 echo "Ctrl+C pour tout arrêter."
 

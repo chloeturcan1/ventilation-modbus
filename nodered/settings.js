@@ -4,17 +4,16 @@
 //   - éditeur des flux : http://localhost:1880
 //   - IHM              : http://localhost:1880/ihm/
 //
-// L'IHM est la même que celle du dossier ihm/ : mêmes pages (ihm/public), même
-// envoi des mails (ihm/alerts.js) et même rapport PDF (ihm/report.js). Seul le
-// serveur change : ici, ce sont les flux Node-RED qui remplacent ihm/server.js.
+// Les flux Node-RED (flows.json) servent les pages de public/, lisent et
+// pilotent l'automate en Modbus TCP, et s'appuient sur alerts.js (mails
+// d'alerte) et report.js (rapport PDF).
 //
 // Node-RED n'écoute que sur la machine elle-même (127.0.0.1) : l'éditeur n'a
 // pas de mot de passe, il ne faut donc pas l'exposer sur le réseau.
 
 const path = require("node:path");
 
-const IHM_DIR = path.join(__dirname, "..", "ihm");
-const { map, toRegister, fromRegister } = require(path.join(IHM_DIR, "modbus_map"));
+const { map, toRegister, fromRegister } = require("./modbus_map");
 
 module.exports = {
     userDir: __dirname,
@@ -39,11 +38,11 @@ module.exports = {
         crypto: require("node:crypto"),
         fs: require("node:fs"),
         path,
-        publicDir: path.join(IHM_DIR, "public"),
-        alerts: require(path.join(IHM_DIR, "alerts")),
-        writeReport: require(path.join(IHM_DIR, "report")).writeReport,
-        // Mots de passe par défaut à changer, comme pour ihm/server.js, avec les
-        // variables d'environnement IHM_OPERATOR_PASSWORD et IHM_ADMIN_PASSWORD.
+        publicDir: path.join(__dirname, "public"),
+        alerts: require("./alerts"),
+        writeReport: require("./report").writeReport,
+        // Mots de passe par défaut à changer avec les variables d'environnement
+        // IHM_OPERATOR_PASSWORD et IHM_ADMIN_PASSWORD.
         passwords: {
             operateur: process.env.IHM_OPERATOR_PASSWORD || "operateur",
             admin: process.env.IHM_ADMIN_PASSWORD || "admin",

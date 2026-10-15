@@ -1,9 +1,9 @@
 # Lance tout le projet en une commande sous Windows : start.bat (ou start.ps1).
 #
 # Equivalent Windows de start.sh, memes etapes que le tuto du README :
-#   1. arrete une version deja lancee (ports 502 et 3000) ;
+#   1. arrete une version deja lancee (ports 502 et 1880) ;
 #   2. recupere la derniere version (git pull) et installe les dependances ;
-#   3. lance l'automate et l'IHM, chacun dans sa propre fenetre, puis ouvre
+#   3. lance l'automate et l'IHM (Node-RED), chacun dans sa propre fenetre, puis ouvre
 #      la page dans le navigateur.
 # Avec -Test (start.bat -Test), lance aussi le test automatique (client.py).
 #
@@ -18,8 +18,8 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $PlcPort = 502
-$IhmPort = 3000
-$Url = "http://localhost:$IhmPort"
+$IhmPort = 1880
+$Url = "http://localhost:$IhmPort/ihm/"
 
 function Step($text) { Write-Host "`n==> $text" -ForegroundColor Cyan }
 function Fail($text) {
@@ -76,7 +76,7 @@ if ((Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path .git)) {
 Step "Installation des dependances"
 uv sync --quiet
 if ($LASTEXITCODE -ne 0) { Fail "uv sync a echoue." }
-Push-Location ihm
+Push-Location nodered
 # npm.cmd plutot que npm : evite le blocage de npm.ps1 par la politique d'execution.
 npm.cmd install --no-audit --no-fund --loglevel=error
 $npmCode = $LASTEXITCODE
@@ -91,12 +91,13 @@ Start-Process cmd -ArgumentList "/k", "title Automate && uv run server.py" -Work
 Wait-Port $PlcPort "L'automate" 60
 
 Step "Lancement de l'IHM"
-Start-Process cmd -ArgumentList "/k", "title IHM && npm.cmd start" -WorkingDirectory (Join-Path $PSScriptRoot "ihm")
+Start-Process cmd -ArgumentList "/k", "title IHM && npm.cmd start" -WorkingDirectory (Join-Path $PSScriptRoot "nodered")
 Wait-Port $IhmPort "L'IHM" 60
 
 Start-Process $Url
 
 Write-Host "`nTout tourne. IHM : $Url (rechargez avec Ctrl+F5)" -ForegroundColor Green
+Write-Host "Editeur de blocs Node-RED : http://localhost:$IhmPort"
 Write-Host "Comptes : operateur / operateur, admin / admin."
 Write-Host "Pour tout arreter : fermez les fenetres Automate et IHM."
 

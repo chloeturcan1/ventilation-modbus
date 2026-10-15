@@ -1,7 +1,7 @@
 // Outils partagés par tous les flux (code « Au démarrage » du bloc).
 //
-// Rassemble ce que ihm/server.js gardait en mémoire : l'état de l'automate, le
-// journal, les sessions et les pages ouvertes (flux temps réel). Les autres
+// Rassemble ce que l'IHM garde en mémoire : l'état de l'automate, le journal,
+// les sessions et les pages ouvertes (flux temps réel). Les autres
 // blocs y accèdent par global.get("ihm").
 
 const mm = global.get("mm");
@@ -9,9 +9,7 @@ const crypto = global.get("crypto");
 const passwords = global.get("passwords");
 
 const JOURNAL_SIZE = 500;
-// Nom différent de celui de ihm/server.js : les deux IHM tournent sur localhost
-// et le navigateur partage les cookies entre les ports.
-const COOKIE = "ihm_nodered_session";
+const COOKIE = "ihm_session";
 const SESSION_MS = 8 * 3600 * 1000; // une session dure le temps d'un poste de travail
 
 const USERS = {

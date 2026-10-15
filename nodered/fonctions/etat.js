@@ -1,5 +1,5 @@
-// Réunit les quatre lectures Modbus en un seul état, au même format que
-// readPlc() dans ihm/server.js (c'est ce que la page attend).
+// Réunit les quatre lectures Modbus en un seul état, au format attendu par la
+// page (public/index.html).
 // msg.topic indique la lecture : coils (FC1), fans (FC2), holding (FC3), inputs (FC4).
 const ihm = global.get("ihm");
 const mm = global.get("mm");

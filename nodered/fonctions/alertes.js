@@ -1,5 +1,5 @@
 // Alertes par mail (administrateur) : destinataires et compte d'envoi, gérés
-// par ihm/alerts.js, comme pour l'IHM web (mêmes fichiers dans ihm/data).
+// par alerts.js (enregistrés dans nodered/data).
 // msg.req.route.path indique la demande.
 const ihm = global.get("ihm");
 const alerts = global.get("alerts");

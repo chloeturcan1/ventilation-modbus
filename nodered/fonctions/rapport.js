@@ -1,5 +1,5 @@
 // GET api/report.pdf : rapport d'alarmes en PDF (opérateur), produit par
-// ihm/report.js comme pour l'IHM web.
+// report.js.
 const ihm = global.get("ihm");
 let user;
 try {

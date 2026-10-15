@@ -90,7 +90,7 @@ class Settings:
     def errors(self) -> list[str]:
         """Raisons de refuser ces réglages (liste vide si ils sont cohérents).
 
-        Mêmes règles que checkSettings() dans ihm/server.js.
+        Mêmes règles que checkSettings() dans nodered/fonctions/cmd-settings.js.
         """
         errors = []
         setpoints = {
