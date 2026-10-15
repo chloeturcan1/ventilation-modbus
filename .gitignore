@@ -6,3 +6,8 @@ node_modules/
 
 # Donnees locales de l IHM : adresses d alerte et compte d envoi (mot de passe)
 ihm/data/
+
+# Fichiers d'execution de Node-RED (regeneres a chaque lancement)
+nodered/.config.*
+nodered/.flows*.backup
+nodered/lib/

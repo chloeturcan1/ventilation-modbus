@@ -326,13 +326,20 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 │   │   ├── alertes.html      # la fenêtre de configuration des alertes par mail
 │   │   └── common.css        # le style commun aux deux pages
 │   └── data/                 # données locales (compte d'envoi, destinataires), non versionnées
-└── pyproject.toml, uv.lock, ihm/package.json   # dépendances
+├── nodered/                  # une seconde IHM, en blocs Node-RED
+│   ├── flows.json            # le flux : lectures / écritures Modbus et tableau de bord
+│   ├── build-flows.js        # régénère flows.json à partir de modbus_map.py
+│   └── settings.js           # réglages de Node-RED (port 1880, accès local seulement)
+└── pyproject.toml, uv.lock, ihm/package.json, nodered/package.json   # dépendances
 ```
 
 Technologies : **Python 3.13** avec [uv](https://docs.astral.sh/uv/) et
 [pymodbus](https://pymodbus.readthedocs.io/) 3.15 pour l'automate ;
 **Node.js** avec [modbus-serial](https://www.npmjs.com/package/modbus-serial),
 [PDFKit](https://pdfkit.org/) et [Nodemailer](https://nodemailer.com/) pour l'IHM.
+L'IHM Node-RED utilise [Node-RED](https://nodered.org/) 5,
+[node-red-contrib-modbus](https://flows.nodered.org/node/node-red-contrib-modbus)
+et [Dashboard 2.0](https://dashboard.flowfuse.com/).
 
 ## Tester le projet
 
@@ -519,6 +526,44 @@ soit actif.
 **Plein écran** : le bouton du même nom affiche l'IHM sur tout l'écran, comme
 sur un poste de supervision. **Échap** ou **Quitter le plein écran** pour en
 sortir.
+
+### L'IHM Node-RED (éditeur de blocs)
+
+En plus de l'IHM web, le dossier `nodered/` contient une seconde IHM faite avec
+**Node-RED** : au lieu d'écrire du code, on relie des blocs dans un éditeur
+graphique. Elle montre les 4 ventilateurs, les températures, les alarmes, et
+offre l'arrêt d'urgence et l'acquittement. Elle n'a pas d'accès opérateur /
+administrateur : c'est pourquoi Node-RED n'écoute que sur l'ordinateur
+lui-même, et pas sur le réseau.
+
+**Lancement** : l'automate doit tourner (étape « automate » de l'option B, ou
+l'option A). Dans un **nouvel onglet** du Terminal (**Cmd+T**) :
+
+```bash
+cd ~/ventilation-modbus/nodered
+npm install
+npm start
+```
+
+`npm install` n'est utile que la première fois. Laissez ce Terminal ouvert :
+**Ctrl+C** arrête Node-RED.
+
+**L'éditeur de blocs** s'ouvre à l'adresse **http://localhost:1880**. On y
+voit le flux « Ventilation » : à gauche les blocs qui lisent l'automate chaque
+seconde, au milieu les fonctions qui mettent les valeurs en forme, à droite
+les éléments de l'IHM. Après une modification, cliquer sur **Déployer** en
+haut à droite pour l'appliquer.
+
+**Ouvrir l'IHM depuis l'éditeur** : dans la barre latérale de droite, cliquer
+sur l'icône **graphique** (onglet *Dashboard 2.0*, en bas de la barre), puis
+sur le bouton **Open Dashboard**. L'IHM s'ouvre dans un nouvel onglet, à
+l'adresse **http://localhost:1880/dashboard**. Un mémo en haut du flux
+rappelle ce chemin.
+
+**Si `modbus_map.py` change** (adresse, port…), régénérez le flux avec
+`npm run build` dans le dossier `nodered`, puis relancez `npm start`.
+Attention : cette commande réécrit `flows.json`, les modifications faites dans
+l'éditeur depuis la dernière génération sont perdues.
 
 ### Le test automatique
 
