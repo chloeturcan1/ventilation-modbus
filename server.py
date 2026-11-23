@@ -6,6 +6,50 @@ puis réécrit les températures et mots d'alarmes (input registers) et l'état 
 ventilateurs (discrete inputs).
 Les registres sont donc la seule interface entre l'automate et les clients (IHM).
 
+Carte mémoire (CO : Coils, DI : Discrete Inputs, HR : Holding Registers, IR : Input Registers) :
+    Liaison : Modbus TCP, port 502, esclave (device id) 1.
+    Températures : en dixièmes de °C, entier signé 16 bits (ex. 234 = 23,4 °C ; -5,0 °C = 65486).
+
+    CO 0   : mode saison (écrit par Node-RED, 0: Hiver, 1: Été ; Été au démarrage)
+    CO 1   : forçage de la température intérieure (0: mesure réelle, 1: valeur de HR 0)
+    CO 2   : forçage de la température extérieure (0: mesure réelle, 1: valeur de HR 1)
+    CO 3   : arrêt d'urgence (0: normal, 1: enfoncé, arrêt de tous les ventilateurs)
+    CO 4   : acquittement des alarmes (impulsion : le client écrit 1, l'automate remet 0)
+    CO 5   : simulation de panne moteur V1 (tests, 0: normal, 1: en panne)
+    CO 6   : simulation de panne moteur V2 (tests, 0: normal, 1: en panne)
+    CO 7   : simulation de panne moteur V3 (tests, 0: normal, 1: en panne)
+    CO 8   : simulation de panne moteur V4 (tests, 0: normal, 1: en panne)
+    CO 9   : retour aux réglages par défaut (impulsion : le client écrit 1, l'automate remet 0)
+
+    DI 0   : retour de marche V1, extraction (0: arrêté, 1: en marche)
+    DI 1   : retour de marche V2, extraction (0: arrêté, 1: en marche)
+    DI 2   : retour de marche V3, extraction (0: arrêté, 1: en marche)
+    DI 3   : retour de marche V4, insufflation (0: arrêté, 1: en marche)
+
+    HR 0   : valeur forcée de la température intérieure (dixièmes de °C, ex. 300 = 30,0 °C)
+    HR 1   : valeur forcée de la température extérieure (dixièmes de °C, ex. 150 = 15,0 °C)
+    HR 2   : mode de conduite de V1 (0: Auto, 1: Manu marche, 2: Manu arrêt)
+    HR 3   : mode de conduite de V2 (0: Auto, 1: Manu marche, 2: Manu arrêt)
+    HR 4   : mode de conduite de V3 (0: Auto, 1: Manu marche, 2: Manu arrêt)
+    HR 5   : mode de conduite de V4 (0: Auto, 1: Manu marche, 2: Manu arrêt)
+    HR 6   : seuil de démarrage V1 en été (dixièmes de °C, ex. 230 = 23,0 °C)
+    HR 7   : seuil de démarrage V2 en été (dixièmes de °C, ex. 240 = 24,0 °C)
+    HR 8   : seuil de démarrage V3 en été (dixièmes de °C, ex. 250 = 25,0 °C)
+    HR 9   : seuil de démarrage V1 en hiver (dixièmes de °C, ex. 260 = 26,0 °C)
+    HR 10  : seuil de démarrage V2 en hiver (dixièmes de °C, ex. 270 = 27,0 °C)
+    HR 11  : seuil de démarrage V3 en hiver (dixièmes de °C, ex. 280 = 28,0 °C)
+    HR 12  : seuil d'insufflation V4 en hiver (dixièmes de °C, ex. 280 = 28,0 °C)
+    HR 13  : hystérésis, écart d'arrêt sous chaque seuil (dixièmes de °C, ex. 5 = 0,5 °C)
+    HR 14  : seuil d'alarme température intérieure haute (dixièmes de °C, ex. 350 = 35,0 °C)
+             (HR 6 à 14 : réglages écrits en un seul bloc ; refusés s'ils sont incohérents)
+
+    IR 0   : mesure de température intérieure (dixièmes de °C, ex. 205 = 20,5 °C)
+    IR 1   : mesure de température extérieure (dixièmes de °C, ex. 120 = 12,0 °C)
+    IR 2   : mot des alarmes actives (bit à 1 = cause présente)
+    IR 3   : mot des alarmes mémorisées (bit à 1 = en attente d'acquittement)
+             bits des mots d'alarmes : 0 arrêt d'urgence, 1 température intérieure haute,
+             2 défaut capteur T_int, 3 défaut capteur T_ext, 4 à 7 défaut rotation V1 à V4
+
 API pymodbus 3.15 : ModbusDeviceContext / ModbusSequentialDataBlock /
 ModbusServerContext sont dépréciés au profit de SimData / SimDevice, et l'objet
 ModbusTcpServer expose async_getValues / async_setValues pour accéder à son
