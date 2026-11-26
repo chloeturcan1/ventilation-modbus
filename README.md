@@ -12,12 +12,48 @@ des **alarmes** à acquitter. Il expose toutes ses données en **Modbus TCP**,
 comme un vrai automate industriel. L'IHM et le client de test
 ne communiquent avec lui que par Modbus.
 
+## Architecture
+
 ```mermaid
 flowchart LR
-    N["Navigateur<br/>http://localhost:1880/ihm/"] -- "HTTP + temps réel (SSE)" --> I["IHM Node-RED<br/>nodered/flows.json"]
-    I -- "Modbus TCP, port 502" --> A["Automate simulé<br/>server.py"]
-    C["Client de test<br/>client.py"] -- "Modbus TCP, port 502" --> A
+    subgraph POSTE["Poste de supervision"]
+        N["Navigateur<br/>IHM : localhost:1880/ihm/<br/>éditeur : localhost:1880"]
+    end
+
+    subgraph NR["IHM Node-RED (nodered/)"]
+        direction TB
+        P["Pages et accès<br/>pages, connexion, temps réel,<br/>rapport PDF, alertes mail"]
+        CMD["Commandes<br/>vérification des droits<br/>et des valeurs"]
+        AUT["Automate<br/>lecture toutes les 500 ms,<br/>journal des alarmes"]
+    end
+
+    subgraph API["Automate simulé (Python)"]
+        direction TB
+        S["server.py<br/>serveur Modbus TCP<br/>cycle de 0,2 s"]
+        L["automate.py<br/>logique, sécurités,<br/>alarmes, simulation"]
+        S <--> L
+    end
+
+    MAP[("modbus_map.py<br/>table d'échange")]
+    C["Client de test<br/>client.py"]
+    MAIL["Messagerie<br/>(SMTP)"]
+
+    N -- "HTTP + temps réel (SSE)" --> P
+    P --> CMD
+    CMD -- "écriture Modbus<br/>(coils, holding registers)" --> S
+    AUT -- "lecture Modbus<br/>(coils, DI, HR, IR)" --> S
+    AUT -- "état et alarmes" --> P
+    P -- "mail d'arrêt d'urgence" --> MAIL
+    C -- "Modbus TCP, port 502" --> S
+    MAP -.->|adresses| S
+    MAP -.->|adresses| NR
+    MAP -.->|adresses| C
 ```
+
+L'automate et ses clients ne se parlent **que par Modbus TCP** (port 502,
+esclave 1). Toutes les adresses viennent d'un seul fichier,
+[`modbus_map.py`](src/ventilation_modbus/modbus_map.py) : voir la
+[table d'échange Modbus](TABLE_MODBUS.md).
 
 ## Fonctionnement de l'automate
 
@@ -116,6 +152,57 @@ cause est toujours présente reste affichée. L'IHM montre un bandeau (rouge :
 alarme active, orange : en attente d'acquittement), l'état de chaque alarme et
 un **journal horodaté** (apparition, disparition, acquittement).
 
+### Diagrammes d'états
+
+**Un ventilateur** (le même schéma vaut pour V1, V2, V3 et V4) :
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Normal
+
+    state "Fonctionnement normal" as Normal {
+        state "Arrêt" as Arret
+        state "Marche" as Marche
+        [*] --> Arret
+        Arret --> Marche : Auto - T_int atteint le seuil<br/>ou Manu marche
+        Marche --> Arret : Auto - T_int sous seuil moins hystérésis<br/>ou Manu arrêt
+    }
+
+    state "Défaut rotation<br/>(verrouillé à l'arrêt)" as Defaut
+    state "Arrêt d'urgence<br/>(tous arrêtés)" as AU
+    state "Attente de réarmement" as Rearm
+
+    Normal --> Defaut : commandé sans retour<br/>de marche pendant 2 s
+    Defaut --> Normal : acquittement
+    Normal --> AU : bouton AU enfoncé
+    Defaut --> AU : bouton AU enfoncé
+    AU --> Rearm : bouton AU relâché
+    Rearm --> AU : bouton AU enfoncé
+    Rearm --> Normal : acquittement
+```
+
+Priorités : arrêt d'urgence, puis défaut de rotation, puis mode manuel, puis
+logique automatique. En sortant d'un défaut ou d'un arrêt d'urgence, le
+ventilateur ne repart **qu'après l'acquittement** de l'opérateur.
+
+**Une alarme** (couleurs du bandeau de l'IHM) :
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "Absente" as Absente
+    state "Active<br/>(bandeau rouge)" as Active
+    state "Mémorisée, à acquitter<br/>(bandeau orange)" as Memo
+
+    [*] --> Absente
+    Absente --> Active : la cause apparaît
+    Active --> Active : acquittement<br/>(sans effet, cause présente)
+    Active --> Memo : la cause disparaît
+    Memo --> Active : la cause réapparaît
+    Memo --> Absente : acquittement
+```
+
 ### Cycle automate
 
 Comme un vrai API, le programme tourne en boucle toutes les **0,2 s** :
@@ -126,6 +213,35 @@ Comme un vrai API, le programme tourne en boucle toutes les **0,2 s** :
    ventilateurs après modes et sécurités ;
 3. écriture des sorties Modbus (températures, mots d'alarmes, état des
    ventilateurs).
+
+```mermaid
+flowchart TD
+    START(["Début du cycle<br/>(toutes les 0,2 s)"]) --> IN
+
+    subgraph E1["1. Lecture des entrées Modbus"]
+        IN["Coils : mode été/hiver, forçages,<br/>arrêt d'urgence, acquittement, pannes simulées<br/>Holding registers : valeurs forcées,<br/>modes auto/manu, réglages"]
+        IN --> OK{"Réglages<br/>cohérents ?"}
+        OK -- oui --> APPLY["Appliquer les<br/>nouveaux réglages"]
+        OK -- non --> KEEP["Réécrire les réglages<br/>en vigueur dans les registres"]
+    end
+
+    subgraph E2["2. Calcul"]
+        TEMP["Températures<br/>(simulation ou valeur forcée)"]
+        TEMP --> CAPT["Capteurs dans la plage<br/>−40 à 80 °C ?"]
+        CAPT --> ALM["Alarmes : actives et mémorisées,<br/>puis acquittement demandé"]
+        ALM --> AUTO["Logique automatique<br/>seuils été/hiver, hystérésis, V4,<br/>mode dégradé si capteur HS"]
+        AUTO --> PRIO["Commande de chaque ventilateur :<br/>AU, puis défaut, puis manuel, puis auto"]
+    end
+
+    subgraph E3["3. Écriture des sorties Modbus"]
+        OUT["Input registers : T_int, T_ext,<br/>mots d'alarmes<br/>Discrete inputs : retour de marche V1 à V4"]
+    end
+
+    APPLY --> TEMP
+    KEEP --> TEMP
+    PRIO --> OUT
+    OUT --> WAIT["Attendre 0,2 s"] --> START
+```
 
 ## Accès opérateur / administrateur
 
