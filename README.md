@@ -1,5 +1,7 @@
 # Ventilation Modbus
 
+📋 **[Table d'échange Modbus](TABLE_MODBUS.md)**
+
 Simulation d'un **automate programmable (API)** qui pilote la ventilation d'un
 bâtiment, avec une **IHM web** de supervision construite avec **Node-RED**.
 
