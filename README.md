@@ -269,6 +269,8 @@ test. Si l'envoi est configuré, chaque test envoie donc des mails d'alerte.
 
 ## Table d'échange Modbus
 
+Cette table existe aussi seule, dans [`TABLE_MODBUS.md`](TABLE_MODBUS.md).
+
 Automate : unit id **1**, port **502**. Toutes les adresses sont définies à un
 seul endroit, [`modbus_map.py`](src/ventilation_modbus/modbus_map.py), que l'automate,
 le client et l'IHM utilisent tous.
@@ -314,6 +316,7 @@ capteur T_ext, bits 4 à 7 défaut rotation V1 à V4. Par exemple, un mot qui va
 │   └── automate.py           # logique, modes, sécurités, alarmes, réglages, simulation
 ├── server.py                 # l'automate : serveur Modbus TCP + cycle de 0,2 s
 ├── client.py                 # test automatique (seuils, conduite, sécurités, réglages)
+├── TABLE_MODBUS.md           # la table d'échange Modbus, seule
 ├── start.sh                  # lance tout en une commande sous macOS / Linux
 ├── start.bat, start.ps1      # lance tout en une commande sous Windows
 ├── nodered/                  # l'IHM, servie par Node-RED
